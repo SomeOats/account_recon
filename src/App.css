@@ -463,6 +463,410 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 
 .empty-state p { font-size: 0.9rem; }
 
+/* ── Topbar Actions ────────────────────────────────────────────────────────── */
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.btn-topbar-loaded {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  background: var(--green-dim);
+  color: var(--green);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  border-radius: var(--radius);
+  font-family: var(--sans);
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+
+.btn-topbar-loaded:hover { background: rgba(34, 197, 94, 0.15); }
+
+.btn-topbar-change {
+  padding: 0.15rem 0.5rem;
+  background: rgba(34, 197, 94, 0.15);
+  border-radius: 3px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* ── Modal ─────────────────────────────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 1.5rem;
+  backdrop-filter: blur(2px);
+}
+
+.modal {
+  background: var(--bg-card);
+  border: 1px solid var(--border-hi);
+  border-radius: 10px;
+  width: 100%;
+  max-width: 520px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.7);
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.25rem 1.5rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.modal-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.modal-close {
+  background: transparent;
+  border: none;
+  color: var(--text-sub);
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0.1rem 0.3rem;
+  border-radius: var(--radius);
+  transition: color 0.15s;
+}
+
+.modal-close:hover { color: var(--text); }
+
+.modal-body {
+  padding: 1.25rem 1.5rem;
+}
+
+.modal-field {
+  margin-top: 1.25rem;
+}
+
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid var(--border);
+}
+
+/* ── File Dropzone (used inside modal) ─────────────────────────────────────── */
+.file-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 1.75rem 1.5rem;
+  border: 1px dashed var(--border-hi);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  text-align: center;
+}
+
+.file-dropzone:hover {
+  border-color: var(--accent);
+  background: rgba(59, 130, 246, 0.04);
+}
+
+.dropzone-icon {
+  font-size: 1.4rem;
+  color: var(--text-dim);
+  line-height: 1;
+}
+
+.dropzone-icon.file-ok { color: var(--green); }
+
+.dropzone-text {
+  font-size: 0.875rem;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.dropzone-sub {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.dropzone-change {
+  font-size: 0.72rem;
+  color: var(--accent-hi);
+  margin-top: 0.15rem;
+}
+
+/* ── Field note ────────────────────────────────────────────────────────────── */
+.field-note {
+  margin-top: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+/* ── Phase 2: Reconciliation Panel ─────────────────────────────────────────── */
+.recon-panel {
+  margin: 0 1.5rem 1.5rem;
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+  overflow: hidden;
+}
+
+.recon-header {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+}
+
+.recon-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.recon-meta {
+  font-size: 0.78rem;
+  color: var(--text-sub);
+  font-family: var(--mono);
+}
+
+.recon-step {
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-card);
+}
+
+.step-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.25rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-sub);
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.step-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font-size: 0.75rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.step-icon.ok   { background: var(--green-dim); color: var(--green); }
+.step-icon.fail { background: var(--red-dim);   color: var(--red);   }
+.step-icon.warn { background: var(--amber-dim); color: var(--amber); }
+
+.step-count {
+  margin-left: auto;
+  font-size: 0.75rem;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-dim);
+  font-family: var(--mono);
+}
+
+.step-body {
+  padding: 1rem 1.25rem;
+}
+
+.balance-compare {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+}
+
+.bc-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.bc-label {
+  font-size: 0.68rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-sub);
+}
+
+.bc-value {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.bc-value.mono { font-family: var(--mono); }
+
+.bc-sep {
+  font-size: 1.1rem;
+  color: var(--text-dim);
+  padding: 0 0.25rem;
+  align-self: flex-end;
+  padding-bottom: 0.1rem;
+}
+
+.step-flag {
+  margin-top: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--red-dim);
+  border: 1px solid var(--red);
+  border-radius: var(--radius);
+  color: var(--red);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.step-note {
+  margin-top: 0.75rem;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.step-success {
+  margin-top: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--green-dim);
+  border: 1px solid var(--green);
+  border-radius: var(--radius);
+  color: var(--green);
+  font-size: 0.8rem;
+}
+
+/* ── Match Table — Paired Rows ─────────────────────────────────────────────── */
+.match-table .col-source { width: 70px; }
+
+/* Even-indexed pairs get a very subtle tint to visually group the two rows */
+.pair-even td { background: rgba(255, 255, 255, 0.018); }
+.pair-odd  td { background: transparent; }
+
+/* Top border marks the start of each new pair */
+.row-file td { border-top: 1px solid var(--border-hi); }
+.row-ynab td { border-bottom: 2px solid transparent; }
+
+/* Cleared pairs: strike-through to show they've been processed */
+.pair-cleared td {
+  opacity: 0.5;
+  text-decoration: line-through;
+  text-decoration-color: var(--text-dim);
+}
+
+/* Unmatched statement rows */
+.row-unmatched td { background: rgba(248, 113, 113, 0.06); border-top: 1px solid var(--border-hi); }
+.row-unmatched .col-flag {
+  font-size: 0.78rem;
+  color: var(--red);
+}
+
+.day-drift {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  margin-left: 0.2rem;
+}
+
+/* ── Source Badges ─────────────────────────────────────────────────────────── */
+.source-badge {
+  display: inline-block;
+  padding: 0.15rem 0.45rem;
+  border-radius: 3px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.source-file { background: var(--blue-dim);  color: var(--blue); }
+.source-ynab { background: var(--green-dim); color: var(--green); }
+
+/* ── Confidence Badges ─────────────────────────────────────────────────────── */
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.45rem;
+  border-radius: 3px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.badge-high { background: var(--green-dim); color: var(--green); }
+.badge-med  { background: var(--amber-dim); color: var(--amber); }
+.badge-low  { background: var(--red-dim);   color: var(--red);   }
+
+/* ── Unmatched YNAB Section ────────────────────────────────────────────────── */
+.unmatched-ynab {
+  margin: 0 1.25rem 1rem;
+  border: 1px solid var(--amber-dim);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.unmatched-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--amber-dim);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--amber);
+}
+
+.unmatched-note {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.75rem;
+  color: var(--text-sub);
+  border-top: 1px solid var(--border);
+}
+
+/* ── Reconcile Action ──────────────────────────────────────────────────────── */
+.recon-action {
+  padding: 1.25rem;
+  background: var(--bg-card);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.recon-action-note {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
 /* ── Scrollbar ─────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
