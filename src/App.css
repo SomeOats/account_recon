@@ -875,6 +875,112 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   line-height: 1.5;
 }
 
+/* ── Balance Strip extras ──────────────────────────────────────────────────── */
+.balance-tile.dim-tile { opacity: 0.6; }
+
+.strip-divider {
+  width: 1px;
+  background: var(--border-hi);
+  align-self: stretch;
+  flex-shrink: 0;
+}
+
+.count-tile .btile-count {
+  font-family: var(--mono);
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* ── Manual badge ──────────────────────────────────────────────────────────── */
+.badge-manual { background: rgba(59,130,246,0.15); color: var(--blue); }
+
+/* ── Unmatch button ────────────────────────────────────────────────────────── */
+.btn-unmatch {
+  background: transparent;
+  border: 1px solid var(--border-hi);
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  font-weight: 500;
+  padding: 0.2rem 0.5rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s;
+}
+.btn-unmatch:hover { color: var(--red); border-color: var(--red); }
+
+/* Small button modifier */
+.btn-sm { padding: 0.35rem 0.75rem; font-size: 0.8rem; }
+
+/* ── col-action (unmatch column) ───────────────────────────────────────────── */
+.col-action { width: 80px; text-align: right; }
+
+/* ── Unmatched section ─────────────────────────────────────────────────────── */
+.unmatched-section {
+  border-top: 1px solid var(--border);
+}
+
+.unmatched-section-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 1.25rem;
+  background: rgba(251, 191, 36, 0.06);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--amber);
+}
+
+/* ── Match action bar ──────────────────────────────────────────────────────── */
+.match-action-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 1.25rem;
+  background: rgba(59, 130, 246, 0.08);
+  border-bottom: 1px solid var(--blue-dim);
+  gap: 1rem;
+}
+
+.match-action-hint {
+  font-size: 0.8rem;
+  color: var(--blue);
+}
+
+.match-action-btns {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* ── Selectable rows ───────────────────────────────────────────────────────── */
+.row-unmatched { cursor: pointer; }
+
+.row-selected td { background: rgba(59, 130, 246, 0.08) !important; }
+.row-selected:hover td { background: rgba(59, 130, 246, 0.12) !important; }
+
+/* ── Selection indicator column ───────────────────────────────────────────── */
+.col-sel { width: 28px; text-align: center; }
+
+.sel-dot {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  user-select: none;
+}
+
+.sel-dot.sel-on { color: var(--blue); }
+
+/* ── Unmatched hint ────────────────────────────────────────────────────────── */
+.unmatched-hint {
+  padding: 0.6rem 1.25rem;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  border-top: 1px solid var(--border);
+  font-style: italic;
+}
+
 /* ── Scrollbar ─────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: var(--bg); }

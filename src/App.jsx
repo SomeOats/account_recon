@@ -65,8 +65,13 @@ function TokenScreen({ onSave }) {
 }
 
 // ─── Balance Tile ─────────────────────────────────────────────────────────────
-function BalanceTile({ label, amount, highlight, warn }) {
-  const cls = ['balance-tile', highlight ? 'highlight' : '', warn ? 'warn' : ''].filter(Boolean).join(' ');
+function BalanceTile({ label, amount, highlight, warn, dim }) {
+  const cls = [
+    'balance-tile',
+    highlight ? 'highlight' : '',
+    warn      ? 'warn'      : '',
+    dim       ? 'dim-tile'  : '',
+  ].filter(Boolean).join(' ');
   return (
     <div className={cls}>
       <span className="btile-label">{label}</span>
@@ -78,7 +83,7 @@ function BalanceTile({ label, amount, highlight, warn }) {
 // ─── Sort Header ──────────────────────────────────────────────────────────────
 function SortTh({ label, colKey, config, onSort, right }) {
   const active = config.key === colKey;
-  const arrow = active ? (config.dir === 'asc' ? ' ↑' : ' ↓') : '';
+  const arrow  = active ? (config.dir === 'asc' ? ' ↑' : ' ↓') : '';
   return (
     <th
       className={['sortable', right ? 'right' : '', active ? 'active' : ''].filter(Boolean).join(' ')}
@@ -90,7 +95,8 @@ function SortTh({ label, colKey, config, onSort, right }) {
 }
 
 // ─── Confidence Badge ─────────────────────────────────────────────────────────
-function ConfidenceBadge({ score }) {
+function ConfidenceBadge({ score, manual }) {
+  if (manual) return <span className="badge badge-manual">Manual</span>;
   if (score >= 0.8) return <span className="badge badge-high">High</span>;
   if (score >= 0.5) return <span className="badge badge-med">Medium</span>;
   return <span className="badge badge-low">Low</span>;
@@ -98,7 +104,7 @@ function ConfidenceBadge({ score }) {
 
 // ─── Import Modal ─────────────────────────────────────────────────────────────
 function ImportModal({ onClose, onRun }) {
-  const [pendingFile, setPendingFile] = useState(null); // { name, parsed }
+  const [pendingFile, setPendingFile] = useState(null);
   const [parseError, setParseError]   = useState('');
 
   async function handleFileSelect(e) {
@@ -107,17 +113,12 @@ function ImportModal({ onClose, onRun }) {
     setParseError('');
     setPendingFile(null);
     try {
-      const text = await file.text();
+      const text   = await file.text();
       const parsed = parseOFX(text);
       setPendingFile({ name: file.name, parsed });
     } catch (err) {
       setParseError(err.message);
     }
-  }
-
-  function handleRun() {
-    if (!pendingFile) return;
-    onRun(pendingFile.parsed);
   }
 
   return (
@@ -129,15 +130,8 @@ function ImportModal({ onClose, onRun }) {
         </div>
 
         <div className="modal-body">
-          {/* File selection — input is a child of the label so clicking the label
-              natively opens the file dialog; no onClick needed on the label itself. */}
           <label className="file-dropzone">
-            <input
-              type="file"
-              accept=".ofx,.qfx"
-              onChange={handleFileSelect}
-              style={{ display: 'none' }}
-            />
+            <input type="file" accept=".ofx,.qfx" onChange={handleFileSelect} style={{ display: 'none' }} />
             {pendingFile ? (
               <>
                 <span className="dropzone-icon file-ok">✓</span>
@@ -147,6 +141,9 @@ function ImportModal({ onClose, onRun }) {
                   Beginning: {formatCurrency(pendingFile.parsed.startingBalanceMilliunits)} ·{' '}
                   Ending: {formatCurrency(pendingFile.parsed.endingBalanceMilliunits)}
                   {pendingFile.parsed.endingBalanceDate && ` (as of ${pendingFile.parsed.endingBalanceDate})`}
+                </span>
+                <span className="dropzone-sub" style={{ color: 'var(--text-dim)', fontSize: '0.7rem' }}>
+                  Beginning = Ending − sum of statement transactions
                 </span>
                 <span className="dropzone-change">Click to change file</span>
               </>
@@ -163,7 +160,7 @@ function ImportModal({ onClose, onRun }) {
 
         <div className="modal-footer">
           <button className="btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn-primary" onClick={handleRun} disabled={!pendingFile}>
+          <button className="btn-primary" onClick={() => pendingFile && onRun(pendingFile.parsed)} disabled={!pendingFile}>
             Run Reconciliation
           </button>
         </div>
@@ -173,10 +170,30 @@ function ImportModal({ onClose, onRun }) {
 }
 
 // ─── Reconciliation Panel ─────────────────────────────────────────────────────
-function ReconcilePanel({ reconciliation, ofxData, onClear, clearing, clearError, clearedIds }) {
-  const { matched, unmatchedOfx, unmatchedYnab, startingBalanceCheck, endingCheck } = reconciliation;
+function ReconcilePanel({
+  matches, unmatchedOfx, unmatchedYnab,
+  ofxData, startingBalanceCheck, endingCheck,
+  onManualMatch, onUnmatch,
+  onClear, clearing, clearError, clearedIds,
+}) {
+  const [selOfxId, setSelOfxId]   = useState(null);
+  const [selYnabId, setSelYnabId] = useState(null);
+
   const alreadyCleared = clearedIds.size > 0;
-  const hasIssues = !startingBalanceCheck.matches || unmatchedOfx.length > 0;
+  const hasIssues      = !startingBalanceCheck.matches || unmatchedOfx.length > 0;
+  const canMatch       = selOfxId !== null && selYnabId !== null;
+
+  function handleMatchSelected() {
+    onManualMatch(selOfxId, selYnabId);
+    setSelOfxId(null);
+    setSelYnabId(null);
+  }
+
+  // Interleave unmatched OFX and YNAB rows sorted by date for easy visual pairing.
+  const unmatchedRows = [
+    ...unmatchedOfx.map(t => ({ src: 'file', id: t.fitid, date: t.date, payee: t.name,       amount: t.amountMilliunits })),
+    ...unmatchedYnab.map(t => ({ src: 'ynab', id: t.id,    date: t.date, payee: t.payee_name, amount: t.amount })),
+  ].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 
   return (
     <div className="recon-panel">
@@ -191,7 +208,7 @@ function ReconcilePanel({ reconciliation, ofxData, onClear, clearing, clearError
         </div>
       </div>
 
-      {/* ── Step 1: Starting Balance ── */}
+      {/* ── Step 1: Starting Balance ──────────────────────────────────────── */}
       <div className="recon-step">
         <div className="step-label">
           <span className={`step-icon ${startingBalanceCheck.matches ? 'ok' : 'fail'}`}>
@@ -213,15 +230,15 @@ function ReconcilePanel({ reconciliation, ofxData, onClear, clearing, clearError
           </div>
           {!startingBalanceCheck.matches && (
             <div className="step-flag">
-              Difference of {formatCurrency(Math.abs(startingBalanceCheck.diff))} — your YNAB cleared
-              balance does not match the statement beginning balance you entered. Check that the
-              correct account is selected and that all prior transactions are cleared in YNAB.
+              Difference of {formatCurrency(Math.abs(startingBalanceCheck.diff))} — YNAB cleared
+              balance does not match the statement beginning balance. Check that the correct account
+              and date range are selected, and that all prior transactions are cleared in YNAB.
             </div>
           )}
         </div>
       </div>
 
-      {/* ── Step 2: Transaction Matching ── */}
+      {/* ── Step 2: Transaction Matching ──────────────────────────────────── */}
       <div className="recon-step">
         <div className="step-label">
           <span className={`step-icon ${unmatchedOfx.length === 0 ? 'ok' : 'fail'}`}>
@@ -229,113 +246,145 @@ function ReconcilePanel({ reconciliation, ofxData, onClear, clearing, clearError
           </span>
           Step 2 — Transaction Matching
           <span className="step-count">
-            {matched.length} of {ofxData.transactions.length} matched
+            {matches.length} matched · {unmatchedOfx.length} file unmatched · {unmatchedYnab.length} YNAB unmatched
           </span>
         </div>
 
-        <div className="table-wrap">
-          <table className="txn-table match-table">
-            <thead>
-              <tr>
-                <th className="col-source">Source</th>
-                <th>Date</th>
-                <th>Payee</th>
-                <th className="right">Amount</th>
-                <th>Confidence</th>
-              </tr>
-            </thead>
-            <tbody>
-              {/* Matched pairs: two rows each — File row then YNAB row */}
-              {matched.map(({ ofx, ynab, payeeScore, daysDiff }, i) => {
-                const cleared = clearedIds.has(ynab.id);
-                const amtCls  = ofx.amountMilliunits < 0 ? 'neg' : 'pos';
-                const pairCls = `pair-${i % 2 === 0 ? 'even' : 'odd'}${cleared ? ' pair-cleared' : ''}`;
-                return (
-                  <>
-                    <tr key={`${ofx.fitid}-file`} className={`row-pair row-file ${pairCls}`}>
-                      <td className="col-source">
-                        <span className="source-badge source-file">File</span>
-                      </td>
-                      <td className="col-date">{ofx.date}</td>
-                      <td className="col-payee">{ofx.name || <span className="dim">—</span>}</td>
-                      <td className={`col-amount ${amtCls}`}>{formatCurrency(ofx.amountMilliunits)}</td>
-                      <td></td>
-                    </tr>
-                    <tr key={`${ofx.fitid}-ynab`} className={`row-pair row-ynab ${pairCls}`}>
-                      <td className="col-source">
-                        <span className="source-badge source-ynab">
-                          {cleared ? '★ YNAB' : '✓ YNAB'}
-                        </span>
-                      </td>
-                      <td className="col-date">
-                        {ynab.date}
-                        {daysDiff > 0 && <span className="day-drift"> ({daysDiff}d)</span>}
-                      </td>
-                      <td className="col-payee">{ynab.payee_name || <span className="dim">—</span>}</td>
-                      <td className={`col-amount ${amtCls}`}>{formatCurrency(ynab.amount)}</td>
-                      <td><ConfidenceBadge score={payeeScore} /></td>
-                    </tr>
-                  </>
-                );
-              })}
-
-              {/* Unmatched statement transactions — single row, flagged */}
-              {unmatchedOfx.map(ofx => {
-                const amtCls = ofx.amountMilliunits < 0 ? 'neg' : 'pos';
-                return (
-                  <tr key={ofx.fitid} className="row-pair row-unmatched">
-                    <td className="col-source">
-                      <span className="source-badge source-file">File</span>
-                    </td>
-                    <td className="col-date">{ofx.date}</td>
-                    <td className="col-payee">{ofx.name || <span className="dim">—</span>}</td>
-                    <td className={`col-amount ${amtCls}`}>{formatCurrency(ofx.amountMilliunits)}</td>
-                    <td className="col-flag">✗ Not in YNAB</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-
-        {/* YNAB transactions not on the statement */}
-        {unmatchedYnab.length > 0 && (
-          <div className="unmatched-ynab">
-            <div className="unmatched-label">
-              <span className="step-icon warn">!</span>
-              {unmatchedYnab.length} YNAB uncleared transaction{unmatchedYnab.length > 1 ? 's' : ''} not on statement
-            </div>
-            <table className="txn-table">
+        {/* Matched pairs */}
+        {matches.length > 0 && (
+          <div className="table-wrap">
+            <table className="txn-table match-table">
               <thead>
                 <tr>
+                  <th className="col-source">Source</th>
                   <th>Date</th>
                   <th>Payee</th>
-                  <th>Memo</th>
                   <th className="right">Amount</th>
+                  <th>Match</th>
+                  <th className="col-action"></th>
                 </tr>
               </thead>
               <tbody>
-                {unmatchedYnab.map(t => (
-                  <tr key={t.id} className={t.amount < 0 ? 'row-debit' : 'row-credit'}>
-                    <td className="col-date">{t.date}</td>
-                    <td className="col-payee">{t.payee_name || <span className="dim">—</span>}</td>
-                    <td className="col-memo">{t.memo || <span className="dim">—</span>}</td>
-                    <td className={`col-amount ${t.amount < 0 ? 'neg' : 'pos'}`}>
-                      {formatCurrency(t.amount)}
-                    </td>
-                  </tr>
-                ))}
+                {matches.map(({ ofx, ynab, payeeScore, daysDiff, manual }, i) => {
+                  const cleared = clearedIds.has(ynab.id);
+                  const amtCls  = ofx.amountMilliunits < 0 ? 'neg' : 'pos';
+                  const pairCls = `pair-${i % 2 === 0 ? 'even' : 'odd'}${cleared ? ' pair-cleared' : ''}`;
+                  return (
+                    <>
+                      <tr key={`${ofx.fitid}-file`} className={`row-pair row-file ${pairCls}`}>
+                        <td><span className="source-badge source-file">File</span></td>
+                        <td className="col-date">{ofx.date}</td>
+                        <td className="col-payee">{ofx.name || <span className="dim">—</span>}</td>
+                        <td className={`col-amount ${amtCls}`}>{formatCurrency(ofx.amountMilliunits)}</td>
+                        <td></td>
+                        <td></td>
+                      </tr>
+                      <tr key={`${ofx.fitid}-ynab`} className={`row-pair row-ynab ${pairCls}`}>
+                        <td>
+                          <span className="source-badge source-ynab">
+                            {cleared ? '★ YNAB' : '✓ YNAB'}
+                          </span>
+                        </td>
+                        <td className="col-date">
+                          {ynab.date}
+                          {daysDiff > 0 && <span className="day-drift"> ({daysDiff}d)</span>}
+                        </td>
+                        <td className="col-payee">{ynab.payee_name || <span className="dim">—</span>}</td>
+                        <td className={`col-amount ${amtCls}`}>{formatCurrency(ynab.amount)}</td>
+                        <td><ConfidenceBadge score={payeeScore} manual={manual} /></td>
+                        <td className="col-action">
+                          {!cleared && (
+                            <button className="btn-unmatch" onClick={() => onUnmatch(ofx.fitid)}>
+                              Unmatch
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    </>
+                  );
+                })}
               </tbody>
             </table>
-            <p className="unmatched-note">
-              These are uncleared in YNAB but do not appear on the statement. They may be
-              pending, post-dated, or need investigation.
-            </p>
+          </div>
+        )}
+
+        {/* Unmatched transactions — interleaved, selectable for manual match */}
+        {unmatchedRows.length > 0 && (
+          <div className="unmatched-section">
+            <div className="unmatched-section-hdr">
+              <span>Unmatched</span>
+              <span className="step-count">
+                {unmatchedOfx.length} file · {unmatchedYnab.length} YNAB
+              </span>
+            </div>
+
+            {canMatch && (
+              <div className="match-action-bar">
+                <span className="match-action-hint">1 file + 1 YNAB transaction selected</span>
+                <div className="match-action-btns">
+                  <button className="btn-ghost btn-sm" onClick={() => { setSelOfxId(null); setSelYnabId(null); }}>
+                    Clear
+                  </button>
+                  <button className="btn-primary btn-sm" onClick={handleMatchSelected}>
+                    Match Selected
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="table-wrap">
+              <table className="txn-table match-table">
+                <thead>
+                  <tr>
+                    <th className="col-source">Source</th>
+                    <th>Date</th>
+                    <th>Payee</th>
+                    <th className="right">Amount</th>
+                    <th className="col-sel"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {unmatchedRows.map(row => {
+                    const isFile     = row.src === 'file';
+                    const isSelected = isFile ? selOfxId === row.id : selYnabId === row.id;
+                    const amtCls     = row.amount < 0 ? 'neg' : 'pos';
+                    return (
+                      <tr
+                        key={`${row.src}-${row.id}`}
+                        className={`row-pair row-unmatched${isSelected ? ' row-selected' : ''}`}
+                        onClick={() => {
+                          if (isFile) setSelOfxId(p => p === row.id ? null : row.id);
+                          else        setSelYnabId(p => p === row.id ? null : row.id);
+                        }}
+                      >
+                        <td>
+                          <span className={`source-badge ${isFile ? 'source-file' : 'source-ynab'}`}>
+                            {isFile ? 'File' : 'YNAB'}
+                          </span>
+                        </td>
+                        <td className="col-date">{row.date}</td>
+                        <td className="col-payee">{row.payee || <span className="dim">—</span>}</td>
+                        <td className={`col-amount ${amtCls}`}>{formatCurrency(row.amount)}</td>
+                        <td className="col-sel">
+                          <span className={`sel-dot ${isSelected ? 'sel-on' : ''}`}>{isSelected ? '●' : '○'}</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {!canMatch && (unmatchedOfx.length > 0 || unmatchedYnab.length > 0) && (
+              <p className="unmatched-hint">
+                Click a File row and a YNAB row to select them, then use "Match Selected" to manually link them.
+              </p>
+            )}
           </div>
         )}
       </div>
 
-      {/* ── Step 3: Balance Verification ── */}
+      {/* ── Step 3: Balance Verification ─────────────────────────────────── */}
       <div className="recon-step">
         <div className="step-label">
           <span className={`step-icon ${endingCheck.matches ? 'ok' : (hasIssues ? 'warn' : 'fail')}`}>
@@ -347,7 +396,7 @@ function ReconcilePanel({ reconciliation, ofxData, onClear, clearing, clearError
           <div className="balance-compare">
             <div className="bc-item">
               <span className="bc-label">
-                {alreadyCleared ? 'YNAB Cleared Balance (refreshed)' : 'Projected after clearing matched'}
+                {endingCheck.alreadyCleared ? 'YNAB Cleared (refreshed)' : 'Projected after clearing matched'}
               </span>
               <span className="bc-value mono">{formatCurrency(endingCheck.projected)}</span>
             </div>
@@ -359,9 +408,8 @@ function ReconcilePanel({ reconciliation, ofxData, onClear, clearing, clearError
           </div>
           {!endingCheck.matches && !hasIssues && (
             <div className="step-flag">
-              Difference of {formatCurrency(Math.abs(endingCheck.diff))} — after clearing all
-              matched transactions the balances do not reconcile. Check for missing or
-              incorrect-amount transactions.
+              Difference of {formatCurrency(Math.abs(endingCheck.diff))} — balances do not reconcile after
+              clearing all matched transactions. Check for missing or incorrect-amount transactions.
             </div>
           )}
           {!endingCheck.matches && hasIssues && (
@@ -369,7 +417,7 @@ function ReconcilePanel({ reconciliation, ofxData, onClear, clearing, clearError
               Resolve the issues in Steps 1 and 2 before this balance can be verified.
             </div>
           )}
-          {endingCheck.matches && alreadyCleared && (
+          {endingCheck.matches && endingCheck.alreadyCleared && (
             <div className="step-success">
               Reconciliation complete — YNAB cleared balance matches the statement ending balance.
             </div>
@@ -377,26 +425,24 @@ function ReconcilePanel({ reconciliation, ofxData, onClear, clearing, clearError
         </div>
       </div>
 
-      {/* ── Action ── */}
-      {!alreadyCleared && matched.length > 0 && (
+      {/* ── Action ───────────────────────────────────────────────────────── */}
+      {!alreadyCleared && matches.length > 0 && (
         <div className="recon-action">
           {clearError && <div className="error-banner" style={{ marginBottom: '0.75rem' }}>{clearError}</div>}
           <button className="btn-primary" onClick={onClear} disabled={clearing}>
             {clearing
               ? 'Clearing…'
-              : `Clear ${matched.length} Matched Transaction${matched.length > 1 ? 's' : ''} in YNAB`}
+              : `Clear ${matches.length} Matched Transaction${matches.length !== 1 ? 's' : ''} in YNAB`}
           </button>
           <p className="recon-action-note">
-            Marks each matched YNAB transaction as "cleared" via the API.
-            Unmatched transactions are not touched.
+            Marks each matched YNAB transaction as "cleared" via the API. Unmatched transactions are not touched.
           </p>
         </div>
       )}
-
       {alreadyCleared && (
         <div className="recon-action">
           <div className="step-success" style={{ marginBottom: 0 }}>
-            {clearedIds.size} transaction{clearedIds.size > 1 ? 's' : ''} marked as cleared in YNAB.
+            {clearedIds.size} transaction{clearedIds.size !== 1 ? 's' : ''} marked as cleared in YNAB.
           </div>
         </div>
       )}
@@ -417,19 +463,53 @@ function Dashboard({ token, budgets, onReset }) {
   const [toDate, setToDate]                   = useState(
     () => format(new Date(), 'yyyy-MM-dd')
   );
-  const [loading, setLoading]           = useState(false);
-  const [error, setError]               = useState('');
-  const [fetched, setFetched]           = useState(false);
-  const [sortConfig, setSortConfig]     = useState({ key: 'date', dir: 'desc' });
+  const [loading, setLoading]   = useState(false);
+  const [error, setError]       = useState('');
+  const [fetched, setFetched]   = useState(false);
+  const [sortConfig, setSortConfig] = useState({ key: 'date', dir: 'desc' });
 
-  // Phase 2 state
+  // ── Reconciliation state (mutable so matches can be added/removed) ─────────
   const [showImportModal, setShowImportModal] = useState(false);
   const [ofxData, setOfxData]                 = useState(null);
-  const [reconciliation, setReconciliation]   = useState(null);
+  const [matches, setMatches]                 = useState([]);
+  const [unmatchedOfx, setUnmatchedOfx]       = useState([]);
+  const [unmatchedYnab, setUnmatchedYnab]     = useState([]);
+  const [reconStartingCheck, setReconStartingCheck] = useState(null); // null = not active
   const [clearing, setClearing]               = useState(false);
   const [clearError, setClearError]           = useState('');
   const [clearedIds, setClearedIds]           = useState(new Set());
 
+  const reconActive = reconStartingCheck !== null;
+
+  // ── Derived: dynamic ending balance check (updates as matches change) ──────
+  const endingCheck = reconActive && accountDetails && ofxData
+    ? (() => {
+        const alreadyCleared = clearedIds.size > 0;
+        // After clearing: accountDetails is refreshed, use it directly.
+        // Before clearing: project what cleared balance will be.
+        const projected = alreadyCleared
+          ? accountDetails.cleared_balance
+          : accountDetails.cleared_balance + matches.reduce((s, m) => s + m.ynab.amount, 0);
+        const statementEnding = ofxData.endingBalanceMilliunits;
+        return {
+          statementEnding,
+          projected,
+          matches:       projected === statementEnding,
+          diff:          projected - statementEnding,
+          alreadyCleared,
+        };
+      })()
+    : null;
+
+  // ── Derived: unmatched balance totals for the strip ───────────────────────
+  const unmatchedCredits = reconActive
+    ? unmatchedOfx.filter(t => t.amountMilliunits > 0).reduce((s, t) => s + t.amountMilliunits, 0)
+    : 0;
+  const unmatchedDebits = reconActive
+    ? unmatchedOfx.filter(t => t.amountMilliunits < 0).reduce((s, t) => s + t.amountMilliunits, 0)
+    : 0;
+
+  // ── Auto-load accounts whenever the selected budget changes ───────────────
   const loadAccounts = useCallback(async (budget) => {
     if (!budget) return;
     setLoading(true);
@@ -449,14 +529,16 @@ function Dashboard({ token, budgets, onReset }) {
     }
   }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-load accounts whenever the selected budget changes (fires on mount too).
   useEffect(() => {
     loadAccounts(selectedBudget);
   }, [selectedBudget?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function resetPhase2() {
     setOfxData(null);
-    setReconciliation(null);
+    setMatches([]);
+    setUnmatchedOfx([]);
+    setUnmatchedYnab([]);
+    setReconStartingCheck(null);
     setClearError('');
     setClearedIds(new Set());
   }
@@ -484,14 +566,13 @@ function Dashboard({ token, budgets, onReset }) {
 
   function handleBudgetChange(e) {
     const budget = budgets.find(b => b.id === e.target.value);
-    // Clear stale data immediately; useEffect will reload accounts for the new budget.
     setAccounts([]);
     setSelectedAccount(null);
     setAccountDetails(null);
     setTransactions([]);
     setFetched(false);
     resetPhase2();
-    setSelectedBudget(budget);
+    setSelectedBudget(budget); // triggers useEffect → loadAccounts
   }
 
   function handleSort(key) {
@@ -501,38 +582,48 @@ function Dashboard({ token, budgets, onReset }) {
     }));
   }
 
-  // Called by ImportModal when the user clicks "Run Reconciliation".
+  // ── Reconciliation handlers ───────────────────────────────────────────────
   function handleRunReconciliation(parsed) {
     setOfxData(parsed);
-
-    const result = matchTransactions(transactions, parsed.transactions);
-
-    const ynabCleared     = accountDetails.cleared_balance;
-    const begBalMilliunits = parsed.startingBalanceMilliunits;
-    const startingBalanceCheck = {
-      statementStarting: begBalMilliunits,
+    const result      = matchTransactions(transactions, parsed.transactions);
+    setMatches(result.matched);
+    setUnmatchedOfx(result.unmatchedOfx);
+    setUnmatchedYnab(result.unmatchedYnab);
+    const ynabCleared = accountDetails.cleared_balance;
+    const begBal      = parsed.startingBalanceMilliunits;
+    setReconStartingCheck({
+      statementStarting: begBal,
       ynabCleared,
-      matches: begBalMilliunits === ynabCleared,
-      diff:    begBalMilliunits - ynabCleared,
-    };
-
-    const matchedSum       = result.matched.reduce((s, m) => s + m.ynab.amount, 0);
-    const projectedCleared = ynabCleared + matchedSum;
-    const endingCheck = {
-      statementEnding: parsed.endingBalanceMilliunits,
-      projected:       projectedCleared,
-      matches:         projectedCleared === parsed.endingBalanceMilliunits,
-      diff:            projectedCleared  - parsed.endingBalanceMilliunits,
-    };
-
-    setReconciliation({ ...result, startingBalanceCheck, endingCheck });
+      matches: begBal === ynabCleared,
+      diff:    begBal - ynabCleared,
+    });
     setClearedIds(new Set());
     setShowImportModal(false);
   }
 
+  function handleManualMatch(ofxFitid, ynabId) {
+    const ofxTxn  = unmatchedOfx.find(t => t.fitid === ofxFitid);
+    const ynabTxn = unmatchedYnab.find(t => t.id === ynabId);
+    if (!ofxTxn || !ynabTxn) return;
+    const dd = Math.round(
+      Math.abs(new Date(ofxTxn.date + 'T00:00:00') - new Date(ynabTxn.date + 'T00:00:00')) / 86_400_000
+    );
+    setMatches(prev => [...prev, { ofx: ofxTxn, ynab: ynabTxn, payeeScore: null, daysDiff: dd, manual: true }]);
+    setUnmatchedOfx(prev => prev.filter(t => t.fitid !== ofxFitid));
+    setUnmatchedYnab(prev => prev.filter(t => t.id !== ynabId));
+  }
+
+  function handleUnmatch(ofxFitid) {
+    const match = matches.find(m => m.ofx.fitid === ofxFitid);
+    if (!match) return;
+    setMatches(prev => prev.filter(m => m.ofx.fitid !== ofxFitid));
+    setUnmatchedOfx(prev => [...prev, match.ofx].sort((a, b) => a.date < b.date ? -1 : 1));
+    setUnmatchedYnab(prev => [...prev, match.ynab].sort((a, b) => a.date < b.date ? -1 : 1));
+  }
+
   async function handleClearMatched() {
-    if (!reconciliation || reconciliation.matched.length === 0) return;
-    const ids = reconciliation.matched.map(m => m.ynab.id);
+    if (matches.length === 0) return;
+    const ids = matches.map(m => m.ynab.id);
     setClearing(true);
     setClearError('');
     try {
@@ -540,17 +631,8 @@ function Dashboard({ token, budgets, onReset }) {
       const idSet = new Set(ids);
       setTransactions(prev => prev.filter(t => !idSet.has(t.id)));
       const details = await getAccountDetails(token, selectedBudget.id, selectedAccount.id);
-      setAccountDetails(details);
+      setAccountDetails(details); // endingCheck recomputes automatically
       setClearedIds(idSet);
-      setReconciliation(prev => ({
-        ...prev,
-        endingCheck: {
-          ...prev.endingCheck,
-          projected: details.cleared_balance,
-          matches:   details.cleared_balance === prev.endingCheck.statementEnding,
-          diff:      details.cleared_balance  - prev.endingCheck.statementEnding,
-        },
-      }));
     } catch (err) {
       setClearError(err.message);
     } finally {
@@ -558,6 +640,7 @@ function Dashboard({ token, budgets, onReset }) {
     }
   }
 
+  // ── Derived display values ────────────────────────────────────────────────
   const sorted = [...transactions].sort((a, b) => {
     const { key, dir } = sortConfig;
     const av = a[key] ?? '';
@@ -567,10 +650,11 @@ function Dashboard({ token, budgets, onReset }) {
   });
 
   const totalUncleared = transactions.reduce((sum, t) => sum + t.amount, 0);
-  const canImport = fetched && accountDetails !== null;
+  const canImport      = fetched && accountDetails !== null;
 
   return (
     <div className="screen dashboard">
+      {/* ── Topbar ─────────────────────────────────────────────────────── */}
       <header className="topbar">
         <div className="topbar-brand">
           <span className="logo-mark-sm">Y</span>
@@ -579,19 +663,12 @@ function Dashboard({ token, budgets, onReset }) {
         <div className="topbar-actions">
           {canImport && (
             ofxData ? (
-              <button
-                className="btn-topbar-loaded"
-                onClick={() => setShowImportModal(true)}
-                title="Statement loaded — click to change"
-              >
+              <button className="btn-topbar-loaded" onClick={() => setShowImportModal(true)}>
                 ✓ Statement loaded
                 <span className="btn-topbar-change">Change</span>
               </button>
             ) : (
-              <button
-                className="btn-secondary"
-                onClick={() => setShowImportModal(true)}
-              >
+              <button className="btn-secondary" onClick={() => setShowImportModal(true)}>
                 Import Statement
               </button>
             )
@@ -600,6 +677,7 @@ function Dashboard({ token, budgets, onReset }) {
         </div>
       </header>
 
+      {/* ── Controls Bar ───────────────────────────────────────────────── */}
       <div className="controls-bar">
         <div className="control-group">
           <label>Account</label>
@@ -621,20 +699,12 @@ function Dashboard({ token, budgets, onReset }) {
 
         <div className="control-group">
           <label>From</label>
-          <input
-            type="date"
-            value={fromDate}
-            onChange={e => setFromDate(e.target.value)}
-          />
+          <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} />
         </div>
 
         <div className="control-group">
           <label>To</label>
-          <input
-            type="date"
-            value={toDate}
-            onChange={e => setToDate(e.target.value)}
-          />
+          <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} />
         </div>
 
         {selectedAccount && (
@@ -655,31 +725,53 @@ function Dashboard({ token, budgets, onReset }) {
 
       {error && <div className="error-banner">{error}</div>}
 
+      {/* ── Balance Strip ──────────────────────────────────────────────── */}
       {accountDetails && (
         <div className="balance-strip">
-          <BalanceTile label="Cleared Balance"   amount={accountDetails.cleared_balance}   highlight />
-          <BalanceTile
-            label="Uncleared Balance"
-            amount={accountDetails.uncleared_balance}
-            warn={accountDetails.uncleared_balance !== 0}
-          />
-          <BalanceTile label="Working Balance" amount={accountDetails.balance} />
-          <div className="balance-tile count-tile">
-            <span className="btile-label">Uncleared Txns</span>
-            <span className="btile-count">{transactions.length}</span>
-          </div>
-          {transactions.length > 0 && (
-            <BalanceTile
-              label="Uncleared Sum"
-              amount={totalUncleared}
-              warn={totalUncleared !== 0}
-            />
+          {reconActive ? (
+            // Reconciliation mode — show file + YNAB balances and unmatched totals
+            <>
+              <BalanceTile label="YNAB Cleared"    amount={accountDetails.cleared_balance} highlight />
+              <BalanceTile label="YNAB Working"    amount={accountDetails.balance} />
+              <div className="strip-divider" />
+              <BalanceTile label="Stmt Beginning"  amount={ofxData.startingBalanceMilliunits} dim />
+              <BalanceTile label="Stmt Ending"     amount={ofxData.endingBalanceMilliunits}   dim />
+              <div className="strip-divider" />
+              <div className="balance-tile count-tile">
+                <span className="btile-label">Unmatched</span>
+                <span className="btile-count">{unmatchedOfx.length + unmatchedYnab.length}</span>
+              </div>
+              {unmatchedCredits !== 0 && (
+                <BalanceTile label="Unmatched Credits" amount={unmatchedCredits} />
+              )}
+              {unmatchedDebits !== 0 && (
+                <BalanceTile label="Unmatched Debits" amount={unmatchedDebits} warn />
+              )}
+            </>
+          ) : (
+            // Normal mode
+            <>
+              <BalanceTile label="Cleared Balance"   amount={accountDetails.cleared_balance} highlight />
+              <BalanceTile
+                label="Uncleared Balance"
+                amount={accountDetails.uncleared_balance}
+                warn={accountDetails.uncleared_balance !== 0}
+              />
+              <BalanceTile label="Working Balance" amount={accountDetails.balance} />
+              <div className="balance-tile count-tile">
+                <span className="btile-label">Uncleared Txns</span>
+                <span className="btile-count">{transactions.length}</span>
+              </div>
+              {transactions.length > 0 && (
+                <BalanceTile label="Uncleared Sum" amount={totalUncleared} warn={totalUncleared !== 0} />
+              )}
+            </>
           )}
         </div>
       )}
 
-      {/* ── YNAB Uncleared Transactions Table ─────────────────────────────── */}
-      {sorted.length > 0 && !reconciliation && (
+      {/* ── YNAB transactions (hidden during reconciliation) ───────────── */}
+      {sorted.length > 0 && !reconActive && (
         <div className="table-wrap">
           <table className="txn-table">
             <thead>
@@ -696,9 +788,7 @@ function Dashboard({ token, budgets, onReset }) {
                   <td className="col-date">{t.date}</td>
                   <td className="col-payee">{t.payee_name || <span className="dim">—</span>}</td>
                   <td className="col-memo">{t.memo || <span className="dim">—</span>}</td>
-                  <td className={`col-amount ${t.amount < 0 ? 'neg' : 'pos'}`}>
-                    {formatCurrency(t.amount)}
-                  </td>
+                  <td className={`col-amount ${t.amount < 0 ? 'neg' : 'pos'}`}>{formatCurrency(t.amount)}</td>
                 </tr>
               ))}
             </tbody>
@@ -706,7 +796,7 @@ function Dashboard({ token, budgets, onReset }) {
         </div>
       )}
 
-      {fetched && transactions.length === 0 && !reconciliation && !ofxData && (
+      {fetched && transactions.length === 0 && !reconActive && (
         <div className="empty-state">
           <span className="check-icon">✓</span>
           <p>No uncleared transactions from <strong>{fromDate}</strong> to <strong>{toDate}</strong>.</p>
@@ -714,11 +804,17 @@ function Dashboard({ token, budgets, onReset }) {
         </div>
       )}
 
-      {/* ── Phase 2: Reconciliation Panel ─────────────────────────────────── */}
-      {reconciliation && ofxData && (
+      {/* ── Reconciliation Panel ───────────────────────────────────────── */}
+      {reconActive && ofxData && endingCheck && (
         <ReconcilePanel
-          reconciliation={reconciliation}
+          matches={matches}
+          unmatchedOfx={unmatchedOfx}
+          unmatchedYnab={unmatchedYnab}
           ofxData={ofxData}
+          startingBalanceCheck={reconStartingCheck}
+          endingCheck={endingCheck}
+          onManualMatch={handleManualMatch}
+          onUnmatch={handleUnmatch}
           onClear={handleClearMatched}
           clearing={clearing}
           clearError={clearError}
@@ -726,7 +822,7 @@ function Dashboard({ token, budgets, onReset }) {
         />
       )}
 
-      {/* ── Import Modal ───────────────────────────────────────────────────── */}
+      {/* ── Import Modal ───────────────────────────────────────────────── */}
       {showImportModal && (
         <ImportModal
           onClose={() => setShowImportModal(false)}
