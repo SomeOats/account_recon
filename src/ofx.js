@@ -54,10 +54,17 @@ export function parseOFX(rawText) {
     const dtPosted     = leafVal(content, 'DTPOSTED');
     const date         = dtPosted ? parseDate(dtPosted) : null;
     const amtStr       = leafVal(content, 'TRNAMT') || '0';
-    const amountMilliunits = Math.round(parseFloat(amtStr) * 1000);
+    let amountMilliunits = Math.round(parseFloat(amtStr) * 1000);
     const name         = leafVal(content, 'NAME')    || '';
     const memo         = leafVal(content, 'MEMO')    || '';
     const type         = leafVal(content, 'TRNTYPE') || '';
+    // Some banks export debit amounts as positive values contrary to the OFX spec.
+    // If TRNTYPE explicitly indicates a debit and the parsed amount is positive,
+    // negate it so the sign is consistent across all bank export formats.
+    const debitTypes = new Set(['DEBIT', 'CHECK', 'PAYMENT', 'ATM', 'SRVCHG', 'FEE']);
+    if (debitTypes.has(type.toUpperCase()) && amountMilliunits > 0) {
+      amountMilliunits = -amountMilliunits;
+    }
     return { fitid, date, amountMilliunits, name, memo, type };
   }).filter(t => t.date);
 

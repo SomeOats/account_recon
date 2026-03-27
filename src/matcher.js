@@ -15,7 +15,7 @@
  */
 
 const PAYEE_MIN = 0.35;   // minimum Jaccard word-overlap score
-const DATE_MAX  = 3;      // maximum allowed days between dates
+const DATE_MAX  = 5;      // maximum allowed days between dates
 
 function normalizePayee(s) {
   return (s || '')

@@ -981,6 +981,121 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   font-style: italic;
 }
 
+/* ── Text inputs (modals use type=text) ────────────────────────────────────── */
+input[type="text"] {
+  width: 100%;
+  background: var(--bg-control);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  padding: 0.6rem 0.75rem;
+  outline: none;
+  transition: border-color 0.15s;
+}
+input[type="text"]:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(59,130,246,0.2);
+}
+
+/* ── Small modal variant ────────────────────────────────────────────────────── */
+.modal-sm { max-width: 360px; }
+
+/* ── Modal field label (inside modal body) ──────────────────────────────────── */
+.modal-field { margin-top: 1rem; }
+.modal-field label {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-sub);
+  margin-bottom: 0.35rem;
+}
+
+/* ── Statement reference row in StageAsNewModal ─────────────────────────────── */
+.stmt-ref {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 0.25rem;
+  font-size: 0.82rem;
+}
+.stmt-ref-date   { color: var(--text-sub); font-family: var(--mono); white-space: nowrap; }
+.stmt-ref-payee  { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stmt-ref-amount { font-family: var(--mono); font-weight: 600; white-space: nowrap; }
+
+/* ── Modal reference text (AmountOverrideModal) ─────────────────────────────── */
+.modal-ref-text {
+  font-size: 0.82rem;
+  color: var(--text-sub);
+  margin-bottom: 0.75rem;
+}
+
+/* ── Stage as New button (on unmatched file rows) ───────────────────────────── */
+.btn-stage-new {
+  background: transparent;
+  border: 1px solid var(--border-hi);
+  color: var(--green);
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.2rem 0.5rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s;
+}
+.btn-stage-new:hover { background: var(--green-dim); border-color: var(--green); }
+
+/* ── Staged for creation section ────────────────────────────────────────────── */
+.staged-section { border-top: 1px solid var(--border); }
+
+.staged-section-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 1.25rem;
+  background: rgba(34, 197, 94, 0.07);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--green);
+}
+
+/* ── Amount override display ────────────────────────────────────────────────── */
+.amount-overridden { color: var(--amber); font-weight: 600; }
+
+.amount-original {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  text-decoration: line-through;
+  margin-left: 0.3rem;
+  font-weight: 400;
+}
+
+/* Edit-amount pencil — hidden until row is hovered */
+.btn-edit-amount {
+  opacity: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  cursor: pointer;
+  padding: 0.05rem 0.25rem;
+  border-radius: 3px;
+  transition: opacity 0.15s, color 0.15s;
+  vertical-align: middle;
+  margin-left: 0.15rem;
+}
+.row-pair:hover .btn-edit-amount { opacity: 1; }
+.btn-edit-amount:hover            { color: var(--accent-hi); }
+.btn-edit-amount.btn-revert:hover { color: var(--amber); }
+
 /* ── Scrollbar ─────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: var(--bg); }

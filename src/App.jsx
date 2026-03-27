@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import {
   getBudgets, getAccounts, getUnclearedTransactions, getAccountDetails,
-  clearTransactions, formatCurrency,
+  getCategories, clearTransactions, createTransactions, formatCurrency,
 } from './ynab';
 import { parseOFX } from './ofx';
 import { matchTransactions } from './matcher';
@@ -142,9 +142,6 @@ function ImportModal({ onClose, onRun }) {
                   Ending: {formatCurrency(pendingFile.parsed.endingBalanceMilliunits)}
                   {pendingFile.parsed.endingBalanceDate && ` (as of ${pendingFile.parsed.endingBalanceDate})`}
                 </span>
-                <span className="dropzone-sub" style={{ color: 'var(--text-dim)', fontSize: '0.7rem' }}>
-                  Beginning = Ending − sum of statement transactions
-                </span>
                 <span className="dropzone-change">Click to change file</span>
               </>
             ) : (
@@ -169,19 +166,148 @@ function ImportModal({ onClose, onRun }) {
   );
 }
 
+// ─── Stage as New Modal ───────────────────────────────────────────────────────
+function StageAsNewModal({ ofx, categoryGroups, categoriesLoading, onStage, onClose }) {
+  const [payee,      setPayee]      = useState(ofx.name || '');
+  const [categoryId, setCategoryId] = useState('');
+  const [memo,       setMemo]       = useState(ofx.memo || '');
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <h2 className="modal-title">Create Transaction in YNAB</h2>
+          <button className="modal-close" onClick={onClose}>×</button>
+        </div>
+
+        <div className="modal-body">
+          <div className="stmt-ref">
+            <span className="source-badge source-file">File</span>
+            <span className="stmt-ref-date">{ofx.date}</span>
+            <span className="stmt-ref-payee">{ofx.name}</span>
+            <span className={`stmt-ref-amount ${ofx.amountMilliunits < 0 ? 'neg' : 'pos'}`}>
+              {formatCurrency(ofx.amountMilliunits)}
+            </span>
+          </div>
+
+          <div className="modal-field">
+            <label>Payee</label>
+            <input
+              type="text"
+              value={payee}
+              onChange={e => setPayee(e.target.value)}
+              autoFocus
+            />
+          </div>
+
+          <div className="modal-field">
+            <label>Category</label>
+            <select value={categoryId} onChange={e => setCategoryId(e.target.value)}>
+              <option value="">
+                {categoriesLoading ? 'Loading categories…' : '— Uncategorized —'}
+              </option>
+              {categoryGroups.map(g => (
+                <optgroup key={g.id} label={g.name}>
+                  {g.categories.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </div>
+
+          <div className="modal-field">
+            <label>Memo</label>
+            <input
+              type="text"
+              value={memo}
+              onChange={e => setMemo(e.target.value)}
+              placeholder="Optional"
+            />
+          </div>
+        </div>
+
+        <div className="modal-footer">
+          <button className="btn-ghost" onClick={onClose}>Cancel</button>
+          <button
+            className="btn-primary"
+            onClick={() => onStage({ payee, categoryId: categoryId || null, memo })}
+            disabled={!payee.trim()}
+          >
+            Stage Transaction
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Amount Override Modal ────────────────────────────────────────────────────
+function AmountOverrideModal({ ynab, currentAmount, onApply, onClose }) {
+  const [value, setValue] = useState((currentAmount / 1000).toFixed(2));
+  const [err,   setErr]   = useState('');
+
+  function handleApply() {
+    const parsed = parseFloat(value.replace(/[^\-0-9.]/g, ''));
+    if (isNaN(parsed)) { setErr('Enter a valid dollar amount, e.g. -42.50'); return; }
+    onApply(Math.round(parsed * 1000));
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal modal-sm" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <h2 className="modal-title">Update Transaction Amount</h2>
+          <button className="modal-close" onClick={onClose}>×</button>
+        </div>
+
+        <div className="modal-body">
+          <p className="modal-ref-text">
+            {ynab.payee_name || '—'} · {ynab.date}
+          </p>
+          <div className="modal-field">
+            <label>New Amount</label>
+            <input
+              type="text"
+              value={value}
+              onChange={e => { setValue(e.target.value); setErr(''); }}
+              onKeyDown={e => { if (e.key === 'Enter') handleApply(); if (e.key === 'Escape') onClose(); }}
+              autoFocus
+            />
+            <p className="field-note">Current YNAB amount: {formatCurrency(ynab.amount)}</p>
+            {err && <p className="field-note" style={{ color: 'var(--red)' }}>{err}</p>}
+          </div>
+        </div>
+
+        <div className="modal-footer">
+          <button className="btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn-primary" onClick={handleApply}>Apply</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Reconciliation Panel ─────────────────────────────────────────────────────
 function ReconcilePanel({
   matches, unmatchedOfx, unmatchedYnab,
   ofxData, startingBalanceCheck, endingCheck,
+  stagedNew, amountOverrides, categoryGroups, categoriesLoading,
   onManualMatch, onUnmatch,
-  onClear, clearing, clearError, clearedIds,
+  onOpenStageModal, onUnstage,
+  onOpenAmountOverride, onClearAmountOverride,
+  onPush, pushing, pushError,
+  clearedIds,
 }) {
-  const [selOfxId, setSelOfxId]   = useState(null);
+  const [selOfxId,  setSelOfxId]  = useState(null);
   const [selYnabId, setSelYnabId] = useState(null);
+  const [stageTarget,         setStageTarget]         = useState(null); // ofx object
+  const [amountOverrideTarget, setAmountOverrideTarget] = useState(null); // { ynab, currentAmount }
 
   const alreadyCleared = clearedIds.size > 0;
   const hasIssues      = !startingBalanceCheck.matches || unmatchedOfx.length > 0;
   const canMatch       = selOfxId !== null && selYnabId !== null;
+  const canPush        = !alreadyCleared && (matches.length > 0 || stagedNew.length > 0);
 
   function handleMatchSelected() {
     onManualMatch(selOfxId, selYnabId);
@@ -189,11 +315,12 @@ function ReconcilePanel({
     setSelYnabId(null);
   }
 
-  // Interleave unmatched OFX and YNAB rows sorted by date for easy visual pairing.
   const unmatchedRows = [
-    ...unmatchedOfx.map(t => ({ src: 'file', id: t.fitid, date: t.date, payee: t.name,       amount: t.amountMilliunits })),
-    ...unmatchedYnab.map(t => ({ src: 'ynab', id: t.id,    date: t.date, payee: t.payee_name, amount: t.amount })),
+    ...unmatchedOfx.map(t => ({ src: 'file', id: t.fitid, date: t.date, payee: t.name,       amount: t.amountMilliunits, raw: t })),
+    ...unmatchedYnab.map(t => ({ src: 'ynab', id: t.id,    date: t.date, payee: t.payee_name, amount: t.amount,           raw: t })),
   ].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+
+  const overrideCount = Object.keys(amountOverrides).length;
 
   return (
     <div className="recon-panel">
@@ -208,7 +335,7 @@ function ReconcilePanel({
         </div>
       </div>
 
-      {/* ── Step 1: Starting Balance ──────────────────────────────────────── */}
+      {/* ── Step 1: Starting Balance ───────────────────────────────────────── */}
       <div className="recon-step">
         <div className="step-label">
           <span className={`step-icon ${startingBalanceCheck.matches ? 'ok' : 'fail'}`}>
@@ -246,7 +373,10 @@ function ReconcilePanel({
           </span>
           Step 2 — Transaction Matching
           <span className="step-count">
-            {matches.length} matched · {unmatchedOfx.length} file unmatched · {unmatchedYnab.length} YNAB unmatched
+            {matches.length} matched
+            {stagedNew.length > 0 && ` · ${stagedNew.length} staged new`}
+            {unmatchedOfx.length > 0 && ` · ${unmatchedOfx.length} file unmatched`}
+            {unmatchedYnab.length > 0 && ` · ${unmatchedYnab.length} YNAB unmatched`}
           </span>
         </div>
 
@@ -266,16 +396,19 @@ function ReconcilePanel({
               </thead>
               <tbody>
                 {matches.map(({ ofx, ynab, payeeScore, daysDiff, manual }, i) => {
-                  const cleared = clearedIds.has(ynab.id);
-                  const amtCls  = ofx.amountMilliunits < 0 ? 'neg' : 'pos';
-                  const pairCls = `pair-${i % 2 === 0 ? 'even' : 'odd'}${cleared ? ' pair-cleared' : ''}`;
+                  const cleared    = clearedIds.has(ynab.id);
+                  const overridden = amountOverrides[ynab.id] !== undefined;
+                  const dispAmt    = overridden ? amountOverrides[ynab.id] : ynab.amount;
+                  const fileAmtCls = ofx.amountMilliunits < 0 ? 'neg' : 'pos';
+                  const ynabAmtCls = dispAmt < 0 ? 'neg' : 'pos';
+                  const pairCls    = `pair-${i % 2 === 0 ? 'even' : 'odd'}${cleared ? ' pair-cleared' : ''}`;
                   return (
                     <>
                       <tr key={`${ofx.fitid}-file`} className={`row-pair row-file ${pairCls}`}>
                         <td><span className="source-badge source-file">File</span></td>
                         <td className="col-date">{ofx.date}</td>
                         <td className="col-payee">{ofx.name || <span className="dim">—</span>}</td>
-                        <td className={`col-amount ${amtCls}`}>{formatCurrency(ofx.amountMilliunits)}</td>
+                        <td className={`col-amount ${fileAmtCls}`}>{formatCurrency(ofx.amountMilliunits)}</td>
                         <td></td>
                         <td></td>
                       </tr>
@@ -290,7 +423,28 @@ function ReconcilePanel({
                           {daysDiff > 0 && <span className="day-drift"> ({daysDiff}d)</span>}
                         </td>
                         <td className="col-payee">{ynab.payee_name || <span className="dim">—</span>}</td>
-                        <td className={`col-amount ${amtCls}`}>{formatCurrency(ynab.amount)}</td>
+                        <td className={`col-amount ${ynabAmtCls}`}>
+                          <span className={overridden ? 'amount-overridden' : ''}>
+                            {formatCurrency(dispAmt)}
+                          </span>
+                          {overridden && (
+                            <span className="amount-original">{formatCurrency(ynab.amount)}</span>
+                          )}
+                          {!cleared && (
+                            <button
+                              className="btn-edit-amount"
+                              title="Edit amount"
+                              onClick={() => setAmountOverrideTarget({ ynab, currentAmount: dispAmt })}
+                            >✎</button>
+                          )}
+                          {overridden && !cleared && (
+                            <button
+                              className="btn-edit-amount btn-revert"
+                              title="Revert to original"
+                              onClick={() => onClearAmountOverride(ynab.id)}
+                            >↩</button>
+                          )}
+                        </td>
                         <td><ConfidenceBadge score={payeeScore} manual={manual} /></td>
                         <td className="col-action">
                           {!cleared && (
@@ -308,7 +462,7 @@ function ReconcilePanel({
           </div>
         )}
 
-        {/* Unmatched transactions — interleaved, selectable for manual match */}
+        {/* Unmatched transactions */}
         {unmatchedRows.length > 0 && (
           <div className="unmatched-section">
             <div className="unmatched-section-hdr">
@@ -341,6 +495,7 @@ function ReconcilePanel({
                     <th>Payee</th>
                     <th className="right">Amount</th>
                     <th className="col-sel"></th>
+                    <th className="col-action"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -368,6 +523,16 @@ function ReconcilePanel({
                         <td className="col-sel">
                           <span className={`sel-dot ${isSelected ? 'sel-on' : ''}`}>{isSelected ? '●' : '○'}</span>
                         </td>
+                        <td className="col-action" onClick={e => e.stopPropagation()}>
+                          {isFile && (
+                            <button
+                              className="btn-stage-new"
+                              onClick={() => setStageTarget(row.raw)}
+                            >
+                              + New
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     );
                   })}
@@ -375,16 +540,60 @@ function ReconcilePanel({
               </table>
             </div>
 
-            {!canMatch && (unmatchedOfx.length > 0 || unmatchedYnab.length > 0) && (
+            {!canMatch && (
               <p className="unmatched-hint">
-                Click a File row and a YNAB row to select them, then use "Match Selected" to manually link them.
+                Select a File row and a YNAB row to manually match them, or click "+ New" on a file row to create the transaction in YNAB.
               </p>
             )}
           </div>
         )}
+
+        {/* Staged for creation */}
+        {stagedNew.length > 0 && (
+          <div className="staged-section">
+            <div className="staged-section-hdr">
+              <span>Staged for Creation</span>
+              <span className="step-count">{stagedNew.length} transaction{stagedNew.length !== 1 ? 's' : ''}</span>
+            </div>
+            <div className="table-wrap">
+              <table className="txn-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Payee (YNAB)</th>
+                    <th>Category</th>
+                    <th>Memo</th>
+                    <th className="right">Amount</th>
+                    <th className="col-action"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stagedNew.map(s => {
+                    const cat    = categoryGroups.flatMap(g => g.categories).find(c => c.id === s.categoryId);
+                    const amtCls = s.ofx.amountMilliunits < 0 ? 'neg' : 'pos';
+                    return (
+                      <tr key={s.ofx.fitid}>
+                        <td className="col-date">{s.ofx.date}</td>
+                        <td className="col-payee">{s.payee || <span className="dim">—</span>}</td>
+                        <td className="col-memo">{cat ? cat.name : <span className="dim">Uncategorized</span>}</td>
+                        <td className="col-memo">{s.memo || <span className="dim">—</span>}</td>
+                        <td className={`col-amount ${amtCls}`}>{formatCurrency(s.ofx.amountMilliunits)}</td>
+                        <td className="col-action">
+                          <button className="btn-unmatch" onClick={() => onUnstage(s.ofx.fitid)}>
+                            Unstage
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* ── Step 3: Balance Verification ─────────────────────────────────── */}
+      {/* ── Step 3: Balance Verification ──────────────────────────────────── */}
       <div className="recon-step">
         <div className="step-label">
           <span className={`step-icon ${endingCheck.matches ? 'ok' : (hasIssues ? 'warn' : 'fail')}`}>
@@ -426,16 +635,23 @@ function ReconcilePanel({
       </div>
 
       {/* ── Action ───────────────────────────────────────────────────────── */}
-      {!alreadyCleared && matches.length > 0 && (
+      {!alreadyCleared && canPush && (
         <div className="recon-action">
-          {clearError && <div className="error-banner" style={{ marginBottom: '0.75rem' }}>{clearError}</div>}
-          <button className="btn-primary" onClick={onClear} disabled={clearing}>
-            {clearing
-              ? 'Clearing…'
-              : `Clear ${matches.length} Matched Transaction${matches.length !== 1 ? 's' : ''} in YNAB`}
+          {pushError && <div className="error-banner" style={{ marginBottom: '0.75rem' }}>{pushError}</div>}
+          <button className="btn-primary" onClick={onPush} disabled={pushing}>
+            {pushing ? 'Pushing to YNAB…' : 'Push to YNAB'}
           </button>
           <p className="recon-action-note">
-            Marks each matched YNAB transaction as "cleared" via the API. Unmatched transactions are not touched.
+            {matches.length > 0 && (
+              <>
+                Mark {matches.length} matched transaction{matches.length !== 1 ? 's' : ''} as cleared
+                {overrideCount > 0 && ` (${overrideCount} with updated amounts)`}.
+              </>
+            )}
+            {matches.length > 0 && stagedNew.length > 0 && ' '}
+            {stagedNew.length > 0 && (
+              <>Create {stagedNew.length} new transaction{stagedNew.length !== 1 ? 's' : ''} in YNAB.</>
+            )}
           </p>
         </div>
       )}
@@ -445,6 +661,31 @@ function ReconcilePanel({
             {clearedIds.size} transaction{clearedIds.size !== 1 ? 's' : ''} marked as cleared in YNAB.
           </div>
         </div>
+      )}
+
+      {/* ── Modals ───────────────────────────────────────────────────────── */}
+      {stageTarget !== null && (
+        <StageAsNewModal
+          ofx={stageTarget}
+          categoryGroups={categoryGroups}
+          categoriesLoading={categoriesLoading}
+          onStage={(fields) => {
+            onOpenStageModal(stageTarget.fitid, fields);
+            setStageTarget(null);
+          }}
+          onClose={() => setStageTarget(null)}
+        />
+      )}
+      {amountOverrideTarget !== null && (
+        <AmountOverrideModal
+          ynab={amountOverrideTarget.ynab}
+          currentAmount={amountOverrideTarget.currentAmount}
+          onApply={(newAmt) => {
+            onOpenAmountOverride(amountOverrideTarget.ynab.id, newAmt);
+            setAmountOverrideTarget(null);
+          }}
+          onClose={() => setAmountOverrideTarget(null)}
+        />
       )}
     </div>
   );
@@ -468,28 +709,36 @@ function Dashboard({ token, budgets, onReset }) {
   const [fetched, setFetched]   = useState(false);
   const [sortConfig, setSortConfig] = useState({ key: 'date', dir: 'desc' });
 
-  // ── Reconciliation state (mutable so matches can be added/removed) ─────────
+  // ── Reconciliation state ───────────────────────────────────────────────────
   const [showImportModal, setShowImportModal] = useState(false);
   const [ofxData, setOfxData]                 = useState(null);
   const [matches, setMatches]                 = useState([]);
   const [unmatchedOfx, setUnmatchedOfx]       = useState([]);
   const [unmatchedYnab, setUnmatchedYnab]     = useState([]);
-  const [reconStartingCheck, setReconStartingCheck] = useState(null); // null = not active
-  const [clearing, setClearing]               = useState(false);
-  const [clearError, setClearError]           = useState('');
-  const [clearedIds, setClearedIds]           = useState(new Set());
+  const [reconStartingCheck, setReconStartingCheck] = useState(null);
+
+  // ── Staged new transactions ────────────────────────────────────────────────
+  const [stagedNew, setStagedNew]               = useState([]);
+  const [amountOverrides, setAmountOverrides]   = useState({});
+  const [categoryGroups, setCategoryGroups]     = useState([]);
+  const [categoriesLoading, setCategoriesLoading] = useState(false);
+
+  // ── Push state ─────────────────────────────────────────────────────────────
+  const [pushing, setPushing]     = useState(false);
+  const [pushError, setPushError] = useState('');
+  const [clearedIds, setClearedIds] = useState(new Set());
 
   const reconActive = reconStartingCheck !== null;
 
-  // ── Derived: dynamic ending balance check (updates as matches change) ──────
+  // ── Derived: dynamic ending balance check ─────────────────────────────────
   const endingCheck = reconActive && accountDetails && ofxData
     ? (() => {
-        const alreadyCleared = clearedIds.size > 0;
-        // After clearing: accountDetails is refreshed, use it directly.
-        // Before clearing: project what cleared balance will be.
+        const alreadyCleared  = clearedIds.size > 0;
         const projected = alreadyCleared
           ? accountDetails.cleared_balance
-          : accountDetails.cleared_balance + matches.reduce((s, m) => s + m.ynab.amount, 0);
+          : accountDetails.cleared_balance
+            + matches.reduce((s, m) => s + (amountOverrides[m.ynab.id] ?? m.ynab.amount), 0)
+            + stagedNew.reduce((s, n) => s + n.ofx.amountMilliunits, 0);
         const statementEnding = ofxData.endingBalanceMilliunits;
         return {
           statementEnding,
@@ -501,7 +750,7 @@ function Dashboard({ token, budgets, onReset }) {
       })()
     : null;
 
-  // ── Derived: unmatched balance totals for the strip ───────────────────────
+  // ── Derived: unmatched balance totals ─────────────────────────────────────
   const unmatchedCredits = reconActive
     ? unmatchedOfx.filter(t => t.amountMilliunits > 0).reduce((s, t) => s + t.amountMilliunits, 0)
     : 0;
@@ -509,7 +758,7 @@ function Dashboard({ token, budgets, onReset }) {
     ? unmatchedOfx.filter(t => t.amountMilliunits < 0).reduce((s, t) => s + t.amountMilliunits, 0)
     : 0;
 
-  // ── Auto-load accounts whenever the selected budget changes ───────────────
+  // ── Auto-load accounts whenever selected budget changes ───────────────────
   const loadAccounts = useCallback(async (budget) => {
     if (!budget) return;
     setLoading(true);
@@ -521,6 +770,7 @@ function Dashboard({ token, budgets, onReset }) {
       setSelectedAccount(null);
       setAccountDetails(null);
       setTransactions([]);
+      setCategoryGroups([]);
       resetPhase2();
     } catch (err) {
       setError(err.message);
@@ -539,8 +789,24 @@ function Dashboard({ token, budgets, onReset }) {
     setUnmatchedOfx([]);
     setUnmatchedYnab([]);
     setReconStartingCheck(null);
-    setClearError('');
+    setStagedNew([]);
+    setAmountOverrides({});
+    setPushError('');
     setClearedIds(new Set());
+  }
+
+  // ── Load categories (lazy — on first "+ New" open) ─────────────────────────
+  async function ensureCategoriesLoaded() {
+    if (categoryGroups.length > 0 || categoriesLoading) return;
+    setCategoriesLoading(true);
+    try {
+      const groups = await getCategories(token, selectedBudget.id);
+      setCategoryGroups(groups);
+    } catch {
+      // non-fatal — category select will just be empty
+    } finally {
+      setCategoriesLoading(false);
+    }
   }
 
   async function loadTransactions() {
@@ -572,7 +838,7 @@ function Dashboard({ token, budgets, onReset }) {
     setTransactions([]);
     setFetched(false);
     resetPhase2();
-    setSelectedBudget(budget); // triggers useEffect → loadAccounts
+    setSelectedBudget(budget);
   }
 
   function handleSort(key) {
@@ -598,6 +864,8 @@ function Dashboard({ token, budgets, onReset }) {
       diff:    begBal - ynabCleared,
     });
     setClearedIds(new Set());
+    setStagedNew([]);
+    setAmountOverrides({});
     setShowImportModal(false);
   }
 
@@ -619,28 +887,87 @@ function Dashboard({ token, budgets, onReset }) {
     setMatches(prev => prev.filter(m => m.ofx.fitid !== ofxFitid));
     setUnmatchedOfx(prev => [...prev, match.ofx].sort((a, b) => a.date < b.date ? -1 : 1));
     setUnmatchedYnab(prev => [...prev, match.ynab].sort((a, b) => a.date < b.date ? -1 : 1));
+    // Remove any amount override for this YNAB transaction
+    setAmountOverrides(prev => { const n = { ...prev }; delete n[match.ynab.id]; return n; });
   }
 
-  async function handleClearMatched() {
-    if (matches.length === 0) return;
-    const ids = matches.map(m => m.ynab.id);
-    setClearing(true);
-    setClearError('');
+  // ── Stage-as-new handlers ─────────────────────────────────────────────────
+  function handleOpenStageModal(ofxFitid, fields) {
+    // Called when StageAsNewModal confirms — move OFX txn to stagedNew
+    const ofxTxn = unmatchedOfx.find(t => t.fitid === ofxFitid);
+    if (!ofxTxn) return;
+    setStagedNew(prev => [...prev, { ofx: ofxTxn, payee: fields.payee, categoryId: fields.categoryId, memo: fields.memo }]);
+    setUnmatchedOfx(prev => prev.filter(t => t.fitid !== ofxFitid));
+  }
+
+  function handleUnstage(ofxFitid) {
+    const staged = stagedNew.find(s => s.ofx.fitid === ofxFitid);
+    if (!staged) return;
+    setStagedNew(prev => prev.filter(s => s.ofx.fitid !== ofxFitid));
+    setUnmatchedOfx(prev => [...prev, staged.ofx].sort((a, b) => a.date < b.date ? -1 : 1));
+  }
+
+  // Intercept "+ New" button click to also lazy-load categories
+  function handleStageNewClick(fitid, fields) {
+    // This is called from ReconcilePanel's onOpenStageModal — which runs after the modal confirms
+    handleOpenStageModal(fitid, fields);
+  }
+
+  // Trigger lazy category load when ReconcilePanel signals intent to open the stage modal
+  // We pass this as a side-effect trigger via a wrapper
+  function handleBeforeStageModal() {
+    ensureCategoriesLoaded();
+  }
+
+  // ── Amount override handlers ──────────────────────────────────────────────
+  function handleAmountOverride(ynabId, newAmount) {
+    setAmountOverrides(prev => ({ ...prev, [ynabId]: newAmount }));
+  }
+
+  function handleClearAmountOverride(ynabId) {
+    setAmountOverrides(prev => { const n = { ...prev }; delete n[ynabId]; return n; });
+  }
+
+  // ── Push to YNAB ──────────────────────────────────────────────────────────
+  async function handlePushToYnab() {
+    setPushing(true);
+    setPushError('');
     try {
-      await clearTransactions(token, selectedBudget.id, ids);
-      const idSet = new Set(ids);
-      setTransactions(prev => prev.filter(t => !idSet.has(t.id)));
+      if (matches.length > 0) {
+        const txns = matches.map(m => ({
+          id:      m.ynab.id,
+          cleared: 'cleared',
+          ...(amountOverrides[m.ynab.id] !== undefined ? { amount: amountOverrides[m.ynab.id] } : {}),
+        }));
+        await clearTransactions(token, selectedBudget.id, txns);
+      }
+      if (stagedNew.length > 0) {
+        const newTxns = stagedNew.map(s => ({
+          account_id:  selectedAccount.id,
+          date:        s.ofx.date,
+          amount:      s.ofx.amountMilliunits,
+          payee_name:  s.payee,
+          ...(s.categoryId ? { category_id: s.categoryId } : {}),
+          ...(s.memo       ? { memo: s.memo }               : {}),
+          cleared: 'cleared',
+        }));
+        await createTransactions(token, selectedBudget.id, newTxns);
+      }
       const details = await getAccountDetails(token, selectedBudget.id, selectedAccount.id);
-      setAccountDetails(details); // endingCheck recomputes automatically
+      setAccountDetails(details);
+      const idSet = new Set(matches.map(m => m.ynab.id));
+      setTransactions(prev => prev.filter(t => !idSet.has(t.id)));
       setClearedIds(idSet);
+      setStagedNew([]);
+      setAmountOverrides({});
     } catch (err) {
-      setClearError(err.message);
+      setPushError(err.message);
     } finally {
-      setClearing(false);
+      setPushing(false);
     }
   }
 
-  // ── Derived display values ────────────────────────────────────────────────
+  // ── Derived display values ─────────────────────────────────────────────────
   const sorted = [...transactions].sort((a, b) => {
     const { key, dir } = sortConfig;
     const av = a[key] ?? '';
@@ -729,13 +1056,12 @@ function Dashboard({ token, budgets, onReset }) {
       {accountDetails && (
         <div className="balance-strip">
           {reconActive ? (
-            // Reconciliation mode — show file + YNAB balances and unmatched totals
             <>
-              <BalanceTile label="YNAB Cleared"    amount={accountDetails.cleared_balance} highlight />
-              <BalanceTile label="YNAB Working"    amount={accountDetails.balance} />
+              <BalanceTile label="YNAB Cleared"   amount={accountDetails.cleared_balance} highlight />
+              <BalanceTile label="YNAB Working"   amount={accountDetails.balance} />
               <div className="strip-divider" />
-              <BalanceTile label="Stmt Beginning"  amount={ofxData.startingBalanceMilliunits} dim />
-              <BalanceTile label="Stmt Ending"     amount={ofxData.endingBalanceMilliunits}   dim />
+              <BalanceTile label="Stmt Beginning" amount={ofxData.startingBalanceMilliunits} dim />
+              <BalanceTile label="Stmt Ending"    amount={ofxData.endingBalanceMilliunits}   dim />
               <div className="strip-divider" />
               <div className="balance-tile count-tile">
                 <span className="btile-label">Unmatched</span>
@@ -747,9 +1073,14 @@ function Dashboard({ token, budgets, onReset }) {
               {unmatchedDebits !== 0 && (
                 <BalanceTile label="Unmatched Debits" amount={unmatchedDebits} warn />
               )}
+              {stagedNew.length > 0 && (
+                <div className="balance-tile count-tile">
+                  <span className="btile-label">Staged New</span>
+                  <span className="btile-count" style={{ color: 'var(--green)' }}>{stagedNew.length}</span>
+                </div>
+              )}
             </>
           ) : (
-            // Normal mode
             <>
               <BalanceTile label="Cleared Balance"   amount={accountDetails.cleared_balance} highlight />
               <BalanceTile
@@ -784,7 +1115,7 @@ function Dashboard({ token, budgets, onReset }) {
             </thead>
             <tbody>
               {sorted.map(t => (
-                <tr key={t.id} className={t.amount < 0 ? 'row-debit' : 'row-credit'}>
+                <tr key={t.id}>
                   <td className="col-date">{t.date}</td>
                   <td className="col-payee">{t.payee_name || <span className="dim">—</span>}</td>
                   <td className="col-memo">{t.memo || <span className="dim">—</span>}</td>
@@ -813,11 +1144,22 @@ function Dashboard({ token, budgets, onReset }) {
           ofxData={ofxData}
           startingBalanceCheck={reconStartingCheck}
           endingCheck={endingCheck}
+          stagedNew={stagedNew}
+          amountOverrides={amountOverrides}
+          categoryGroups={categoryGroups}
+          categoriesLoading={categoriesLoading}
           onManualMatch={handleManualMatch}
           onUnmatch={handleUnmatch}
-          onClear={handleClearMatched}
-          clearing={clearing}
-          clearError={clearError}
+          onOpenStageModal={(fitid, fields) => {
+            handleBeforeStageModal();
+            handleStageNewClick(fitid, fields);
+          }}
+          onUnstage={handleUnstage}
+          onOpenAmountOverride={handleAmountOverride}
+          onClearAmountOverride={handleClearAmountOverride}
+          onPush={handlePushToYnab}
+          pushing={pushing}
+          pushError={pushError}
           clearedIds={clearedIds}
         />
       )}
