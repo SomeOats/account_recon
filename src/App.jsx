@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import {
   getBudgets, getAccounts, getUnclearedTransactions, getAccountDetails,
   clearTransactions, formatCurrency,
@@ -411,12 +411,14 @@ function Dashboard({ token, budgets, onReset }) {
   const [selectedAccount, setSelectedAccount] = useState(null);
   const [accountDetails, setAccountDetails]   = useState(null);
   const [transactions, setTransactions]       = useState([]);
-  const [sinceDate, setSinceDate]             = useState(
+  const [fromDate, setFromDate]               = useState(
     () => format(startOfMonth(subMonths(new Date(), 1)), 'yyyy-MM-dd')
+  );
+  const [toDate, setToDate]                   = useState(
+    () => format(new Date(), 'yyyy-MM-dd')
   );
   const [loading, setLoading]           = useState(false);
   const [error, setError]               = useState('');
-  const [accountsLoaded, setAccountsLoaded] = useState(false);
   const [fetched, setFetched]           = useState(false);
   const [sortConfig, setSortConfig]     = useState({ key: 'date', dir: 'desc' });
 
@@ -429,6 +431,7 @@ function Dashboard({ token, budgets, onReset }) {
   const [clearedIds, setClearedIds]           = useState(new Set());
 
   const loadAccounts = useCallback(async (budget) => {
+    if (!budget) return;
     setLoading(true);
     setError('');
     setFetched(false);
@@ -438,14 +441,18 @@ function Dashboard({ token, budgets, onReset }) {
       setSelectedAccount(null);
       setAccountDetails(null);
       setTransactions([]);
-      setAccountsLoaded(true);
       resetPhase2();
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-load accounts whenever the selected budget changes (fires on mount too).
+  useEffect(() => {
+    loadAccounts(selectedBudget);
+  }, [selectedBudget?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function resetPhase2() {
     setOfxData(null);
@@ -462,7 +469,7 @@ function Dashboard({ token, budgets, onReset }) {
     resetPhase2();
     try {
       const [txns, details] = await Promise.all([
-        getUnclearedTransactions(token, selectedBudget.id, selectedAccount.id, sinceDate),
+        getUnclearedTransactions(token, selectedBudget.id, selectedAccount.id, fromDate, toDate),
         getAccountDetails(token, selectedBudget.id, selectedAccount.id),
       ]);
       setTransactions(txns);
@@ -477,14 +484,14 @@ function Dashboard({ token, budgets, onReset }) {
 
   function handleBudgetChange(e) {
     const budget = budgets.find(b => b.id === e.target.value);
-    setSelectedBudget(budget);
-    setAccountsLoaded(false);
+    // Clear stale data immediately; useEffect will reload accounts for the new budget.
     setAccounts([]);
     setSelectedAccount(null);
     setAccountDetails(null);
     setTransactions([]);
     setFetched(false);
     resetPhase2();
+    setSelectedBudget(budget);
   }
 
   function handleSort(key) {
@@ -595,55 +602,54 @@ function Dashboard({ token, budgets, onReset }) {
 
       <div className="controls-bar">
         <div className="control-group">
-          <label>Budget</label>
-          <select value={selectedBudget?.id || ''} onChange={handleBudgetChange}>
-            {budgets.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+          <label>Account</label>
+          <select
+            value={selectedAccount?.id || ''}
+            onChange={e => {
+              setSelectedAccount(accounts.find(a => a.id === e.target.value) || null);
+              setAccountDetails(null);
+              setTransactions([]);
+              setFetched(false);
+              resetPhase2();
+            }}
+            disabled={accounts.length === 0}
+          >
+            <option value="">{loading ? 'Loading accounts…' : '— Select account —'}</option>
+            {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
-          {!accountsLoaded && (
-            <button
-              className="btn-secondary"
-              onClick={() => loadAccounts(selectedBudget)}
-              disabled={loading}
-            >
-              {loading ? 'Loading…' : 'Load Accounts'}
-            </button>
-          )}
         </div>
 
-        {accountsLoaded && (
-          <div className="control-group">
-            <label>Account</label>
-            <select
-              value={selectedAccount?.id || ''}
-              onChange={e => {
-                setSelectedAccount(accounts.find(a => a.id === e.target.value) || null);
-                setAccountDetails(null);
-                setTransactions([]);
-                setFetched(false);
-                resetPhase2();
-              }}
-            >
-              <option value="">— Select account —</option>
-              {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-            </select>
-          </div>
-        )}
+        <div className="control-group">
+          <label>From</label>
+          <input
+            type="date"
+            value={fromDate}
+            onChange={e => setFromDate(e.target.value)}
+          />
+        </div>
 
-        {accountsLoaded && (
-          <div className="control-group">
-            <label>Transactions since</label>
-            <input
-              type="date"
-              value={sinceDate}
-              onChange={e => setSinceDate(e.target.value)}
-            />
-          </div>
-        )}
+        <div className="control-group">
+          <label>To</label>
+          <input
+            type="date"
+            value={toDate}
+            onChange={e => setToDate(e.target.value)}
+          />
+        </div>
 
         {selectedAccount && (
           <button className="btn-primary" onClick={loadTransactions} disabled={loading}>
             {loading ? 'Fetching…' : 'Fetch Uncleared'}
           </button>
+        )}
+
+        {budgets.length > 1 && (
+          <div className="control-group budget-group">
+            <label>Budget</label>
+            <select value={selectedBudget?.id || ''} onChange={handleBudgetChange}>
+              {budgets.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          </div>
         )}
       </div>
 
@@ -703,7 +709,7 @@ function Dashboard({ token, budgets, onReset }) {
       {fetched && transactions.length === 0 && !reconciliation && !ofxData && (
         <div className="empty-state">
           <span className="check-icon">✓</span>
-          <p>No uncleared transactions since <strong>{sinceDate}</strong>.</p>
+          <p>No uncleared transactions from <strong>{fromDate}</strong> to <strong>{toDate}</strong>.</p>
           <p className="dim">All transactions in this window are cleared or reconciled.</p>
         </div>
       )}

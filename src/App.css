@@ -299,6 +299,14 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   min-width: 180px;
 }
 
+/* Budget picker is a secondary control — push it to the right and dim it slightly */
+.budget-group {
+  margin-left: auto;
+  opacity: 0.75;
+}
+.budget-group:hover { opacity: 1; }
+.budget-group select { min-width: 140px; }
+
 /* ── Balance Strip ─────────────────────────────────────────────────────────── */
 .balance-strip {
   display: flex;

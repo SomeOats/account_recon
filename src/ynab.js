@@ -34,11 +34,15 @@ export async function getAccounts(token, budgetId) {
   return data.data.accounts.filter((a) => !a.deleted && !a.closed);
 }
 
-export async function getUnclearedTransactions(token, budgetId, accountId, sinceDate) {
-  const params = sinceDate ? `?since_date=${sinceDate}` : '';
+export async function getUnclearedTransactions(token, budgetId, accountId, fromDate, toDate) {
+  const params = fromDate ? `?since_date=${fromDate}` : '';
   const data = await apiFetch(token, `/budgets/${budgetId}/transactions${params}`);
   return data.data.transactions.filter(
-    (t) => t.account_id === accountId && t.cleared === 'uncleared' && !t.deleted
+    (t) =>
+      t.account_id === accountId &&
+      t.cleared === 'uncleared' &&
+      !t.deleted &&
+      (!toDate || t.date <= toDate)
   );
 }
 
