@@ -106,22 +106,46 @@ function ConfidenceBadge({ score, manual, pending, approved }) {
 
 // ─── Import Modal ─────────────────────────────────────────────────────────────
 function ImportModal({ onClose, onRun }) {
-  const [pendingFile, setPendingFile] = useState(null);
-  const [parseError, setParseError]   = useState('');
+  const [pendingFile,     setPendingFile]     = useState(null);
+  const [parseError,      setParseError]      = useState('');
+  const [endingBalanceStr, setEndingBalanceStr] = useState('');
+  const [balanceError,    setBalanceError]    = useState('');
 
   async function handleFileSelect(e) {
     const file = e.target.files[0];
     if (!file) return;
     setParseError('');
+    setBalanceError('');
     setPendingFile(null);
     try {
       const text   = await file.text();
       const parsed = parseOFX(text);
       setPendingFile({ name: file.name, parsed });
+      // Pre-fill from the OFX LEDGERBAL as a starting suggestion — user should verify
+      setEndingBalanceStr((parsed.endingBalanceMilliunits / 1000).toFixed(2));
     } catch (err) {
       setParseError(err.message);
     }
   }
+
+  function handleRun() {
+    if (!pendingFile) return;
+    const dollars = parseFloat(endingBalanceStr.replace(/[^-0-9.]/g, ''));
+    if (isNaN(dollars)) {
+      setBalanceError('Enter a valid dollar amount, e.g. 1234.56 or -42.00');
+      return;
+    }
+    const endingMilliunits   = Math.round(dollars * 1000);
+    const txnSum             = pendingFile.parsed.transactions.reduce((s, t) => s + t.amountMilliunits, 0);
+    const startingMilliunits = endingMilliunits - txnSum;
+    onRun({
+      ...pendingFile.parsed,
+      endingBalanceMilliunits:   endingMilliunits,
+      startingBalanceMilliunits: startingMilliunits,
+    });
+  }
+
+  const canRun = pendingFile !== null && endingBalanceStr.trim() !== '';
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -139,10 +163,8 @@ function ImportModal({ onClose, onRun }) {
                 <span className="dropzone-icon file-ok">✓</span>
                 <span className="dropzone-text">{pendingFile.name}</span>
                 <span className="dropzone-sub">
-                  {pendingFile.parsed.transactions.length} transactions ·{' '}
-                  Beginning: {formatCurrency(pendingFile.parsed.startingBalanceMilliunits)} ·{' '}
-                  Ending: {formatCurrency(pendingFile.parsed.endingBalanceMilliunits)}
-                  {pendingFile.parsed.endingBalanceDate && ` (as of ${pendingFile.parsed.endingBalanceDate})`}
+                  {pendingFile.parsed.transactions.length} transactions
+                  {pendingFile.parsed.endingBalanceDate && ` · as of ${pendingFile.parsed.endingBalanceDate}`}
                 </span>
                 <span className="dropzone-change">Click to change file</span>
               </>
@@ -155,11 +177,28 @@ function ImportModal({ onClose, onRun }) {
             )}
           </label>
           {parseError && <div className="error-msg" style={{ marginTop: '0.75rem' }}>{parseError}</div>}
+
+          {pendingFile && (
+            <div className="modal-field">
+              <label>Statement Ending Balance</label>
+              <input
+                type="text"
+                value={endingBalanceStr}
+                onChange={e => { setEndingBalanceStr(e.target.value); setBalanceError(''); }}
+                placeholder="e.g. 1234.56"
+                autoFocus
+              />
+              {balanceError
+                ? <p className="field-note" style={{ color: 'var(--red)' }}>{balanceError}</p>
+                : <p className="field-note">Enter the ending balance exactly as shown on your bank statement.</p>
+              }
+            </div>
+          )}
         </div>
 
         <div className="modal-footer">
           <button className="btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn-primary" onClick={() => pendingFile && onRun(pendingFile.parsed)} disabled={!pendingFile}>
+          <button className="btn-primary" onClick={handleRun} disabled={!canRun}>
             Run Reconciliation
           </button>
         </div>
