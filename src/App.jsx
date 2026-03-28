@@ -377,10 +377,37 @@ function ReconcilePanel({
     setSelYnabId(null);
   }
 
+  const [matchSort,     setMatchSort]     = useState({ key: 'date', dir: 'asc' });
+  const [pendingSort,   setPendingSort]   = useState({ key: 'date', dir: 'asc' });
+  const [unmatchedSort, setUnmatchedSort] = useState({ key: 'date', dir: 'asc' });
+
+  function makeSort(setState) {
+    return (key) => setState(prev => ({ key, dir: prev.key === key && prev.dir === 'asc' ? 'desc' : 'asc' }));
+  }
+
+  function applySort(arr, config, getVal) {
+    return [...arr].sort((a, b) => {
+      const av = getVal(a, config.key) ?? '';
+      const bv = getVal(b, config.key) ?? '';
+      const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+      return config.dir === 'asc' ? cmp : -cmp;
+    });
+  }
+
+  const sortedMatches  = applySort(matches, matchSort, (m, k) =>
+    k === 'date' ? m.ofx.date : k === 'payee' ? (m.ofx.name || '').toLowerCase() : m.ofx.amountMilliunits
+  );
+  const sortedPending  = applySort(pendingMatches, pendingSort, (p, k) =>
+    k === 'date' ? p.ofx.date : k === 'payee' ? (p.ofx.name || '').toLowerCase() : p.ofx.amountMilliunits
+  );
+
   const unmatchedRows = [
     ...unmatchedOfx.map(t => ({ src: 'file', id: t.fitid, date: t.date, payee: t.name,       amount: t.amountMilliunits, raw: t })),
     ...unmatchedYnab.map(t => ({ src: 'ynab', id: t.id,    date: t.date, payee: t.payee_name, amount: t.amount,           raw: t })),
-  ].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  ];
+  const sortedUnmatched = applySort(unmatchedRows, unmatchedSort, (r, k) =>
+    k === 'date' ? r.date : k === 'payee' ? (r.payee || '').toLowerCase() : r.amount
+  );
 
   const overrideCount = Object.keys(amountOverrides).length;
 
@@ -452,15 +479,15 @@ function ReconcilePanel({
               <thead>
                 <tr>
                   <th className="col-source">Source</th>
-                  <th>Date</th>
-                  <th>Payee</th>
-                  <th className="right">Amount</th>
+                  <SortTh label="Date"   colKey="date"   config={matchSort} onSort={makeSort(setMatchSort)} />
+                  <SortTh label="Payee"  colKey="payee"  config={matchSort} onSort={makeSort(setMatchSort)} />
+                  <SortTh label="Amount" colKey="amount" config={matchSort} onSort={makeSort(setMatchSort)} right />
                   <th>Match</th>
                   <th className="col-action"></th>
                 </tr>
               </thead>
               <tbody>
-                {matches.map(({ ofx, ynab, payeeScore, daysDiff, manual, approved }, i) => {
+                {sortedMatches.map(({ ofx, ynab, payeeScore, daysDiff, manual, approved }, i) => {
                   const cleared    = clearedIds.has(ynab.id);
                   const overridden = amountOverrides[ynab.id] !== undefined;
                   const dispAmt    = overridden ? amountOverrides[ynab.id] : ynab.amount;
@@ -555,15 +582,15 @@ function ReconcilePanel({
                 <thead>
                   <tr>
                     <th className="col-source">Source</th>
-                    <th>Date</th>
-                    <th>Payee</th>
-                    <th className="right">Amount</th>
+                    <SortTh label="Date"   colKey="date"   config={pendingSort} onSort={makeSort(setPendingSort)} />
+                    <SortTh label="Payee"  colKey="payee"  config={pendingSort} onSort={makeSort(setPendingSort)} />
+                    <SortTh label="Amount" colKey="amount" config={pendingSort} onSort={makeSort(setPendingSort)} right />
                     <th>Match</th>
                     <th className="col-action pending-actions"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {pendingMatches.map(({ ofx, ynab, daysDiff: dd }, i) => {
+                  {sortedPending.map(({ ofx, ynab, daysDiff: dd }, i) => {
                     const pairCls    = `pair-pending-${i % 2 === 0 ? 'even' : 'odd'}`;
                     const fileAmtCls = ofx.amountMilliunits < 0 ? 'neg' : 'pos';
                     const ynabAmtCls = ynab.amount < 0 ? 'neg' : 'pos';
@@ -632,15 +659,15 @@ function ReconcilePanel({
                 <thead>
                   <tr>
                     <th className="col-source">Source</th>
-                    <th>Date</th>
-                    <th>Payee</th>
-                    <th className="right">Amount</th>
+                    <SortTh label="Date"   colKey="date"   config={unmatchedSort} onSort={makeSort(setUnmatchedSort)} />
+                    <SortTh label="Payee"  colKey="payee"  config={unmatchedSort} onSort={makeSort(setUnmatchedSort)} />
+                    <SortTh label="Amount" colKey="amount" config={unmatchedSort} onSort={makeSort(setUnmatchedSort)} right />
                     <th className="col-sel"></th>
                     <th className="col-action"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {unmatchedRows.map(row => {
+                  {sortedUnmatched.map(row => {
                     const isFile     = row.src === 'file';
                     const isSelected = isFile ? selOfxId === row.id : selYnabId === row.id;
                     const override   = !isFile ? amountOverrides[row.id] : undefined;
