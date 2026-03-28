@@ -1084,9 +1084,11 @@ function Dashboard({ token, budgets, onReset }) {
       const details = await getAccountDetails(token, selectedBudget.id, selectedAccount.id);
       setAccountDetails(details);
 
-      // Walk backwards month by month until the oldest fetched month is fully cleared.
-      // This collects all uncleared transactions without requiring the user to set a date range.
-      const MAX_MONTHS_BACK = 24;
+      // Walk backwards month by month to collect all uncleared transactions.
+      // Stop when the oldest fetched month has transactions and they are all reconciled.
+      // Continue when the oldest month has uncleared transactions OR has no transactions at all.
+      // Hard limit: 12 months. Zero total transactions after that window is an error.
+      const MAX_MONTHS_BACK = 12;
       let sinceDate = startOfMonth(new Date());
       let allTxns   = [];
 
@@ -1097,14 +1099,26 @@ function Dashboard({ token, budgets, onReset }) {
 
         allTxns = await getTransactionsSince(token, selectedBudget.id, selectedAccount.id, sinceDateStr);
 
-        // Check whether the boundary month (oldest we've fetched) has any uncleared transactions.
-        // If not — including the case where it has no transactions at all — we can stop.
         const boundaryTxns = allTxns.filter(t => t.date.startsWith(sinceMonth));
-        if (boundaryTxns.every(t => t.cleared !== 'uncleared')) break;
 
+        // All transactions in the oldest month are reconciled — no need to go further back
+        if (boundaryTxns.length > 0 && boundaryTxns.every(t => t.cleared === 'reconciled')) break;
+
+        // Hit the limit — stop regardless
+        if (i === MAX_MONTHS_BACK) break;
+
+        // Boundary month has uncleared transactions, or has no transactions at all — keep going back
         sinceDate = startOfMonth(subMonths(sinceDate, 1));
       }
 
+      if (allTxns.length === 0) {
+        throw new Error(
+          `No transactions found for "${selectedAccount.name}" in the last ${MAX_MONTHS_BACK} months. ` +
+          'Verify the correct account is selected.'
+        );
+      }
+
+      // Empty uncleared list is a valid success state — everything is cleared or reconciled
       setTransactions(allTxns.filter(t => t.cleared === 'uncleared'));
       setFetched(true);
     } catch (err) {
