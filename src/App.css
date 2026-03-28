@@ -884,6 +884,48 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   line-height: 1.5;
 }
 
+/* ── Push pre-flight checklist ─────────────────────────────────────────────── */
+.push-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-bottom: 1rem;
+}
+
+.push-check {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: 0.82rem;
+  color: var(--text-sub);
+}
+
+.push-check-fail {
+  color: var(--text);
+}
+
+.push-check-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: 0.68rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.push-check-ok   .push-check-icon { background: var(--green-dim); color: var(--green); }
+.push-check-fail .push-check-icon { background: var(--red-dim);   color: var(--red);   }
+
+.push-check-note {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
 /* ── Balance Strip extras ──────────────────────────────────────────────────── */
 .balance-tile.dim-tile { opacity: 0.6; }
 
@@ -956,6 +998,15 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 .match-action-hint {
   font-size: 0.8rem;
   color: var(--blue);
+}
+
+.match-action-bar-warn {
+  background: rgba(248, 113, 113, 0.06);
+  border-bottom-color: var(--red-dim);
+}
+
+.match-action-warn {
+  color: var(--red);
 }
 
 .match-action-btns {
@@ -1119,6 +1170,31 @@ input[type="text"]:focus {
   font-weight: 400;
 }
 
+/* ── Amount cell with inline edit button ───────────────────────────────────── */
+/* Flex row: [edit btns on left] [amount value on right] */
+.amount-with-edit {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.2rem;
+}
+
+/* Keeps buttons grouped and not breaking across lines */
+.amount-edit-btns {
+  display: flex;
+  align-items: center;
+  gap: 0.1rem;
+  flex-shrink: 0;
+}
+
+/* The amount text stays right-aligned as a unit */
+.amount-value {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.25rem;
+  white-space: nowrap;
+}
+
 /* Edit-amount pencil — hidden until row is hovered */
 .btn-edit-amount {
   opacity: 0;
@@ -1130,12 +1206,123 @@ input[type="text"]:focus {
   padding: 0.05rem 0.25rem;
   border-radius: 3px;
   transition: opacity 0.15s, color 0.15s;
-  vertical-align: middle;
-  margin-left: 0.15rem;
+  flex-shrink: 0;
 }
 .row-pair:hover .btn-edit-amount { opacity: 1; }
 .btn-edit-amount:hover            { color: var(--accent-hi); }
 .btn-edit-amount.btn-revert:hover { color: var(--amber); }
+
+/* ── Zero-amount statement entries section ──────────────────────────────────── */
+.zero-amount-section { border-top: 1px solid var(--border); }
+
+.zero-amount-section-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 1.25rem;
+  background: rgba(74, 81, 104, 0.1);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.row-zero-amount td { opacity: 0.55; }
+
+/* ── Staged for deletion section ────────────────────────────────────────────── */
+.delete-section { border-top: 1px solid var(--border); }
+
+.delete-section-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 1.25rem;
+  background: rgba(248, 113, 113, 0.07);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--red);
+}
+
+.row-staged-delete td {
+  background: rgba(248, 113, 113, 0.04);
+  text-decoration: line-through;
+  text-decoration-color: var(--red-dim);
+  opacity: 0.7;
+}
+
+/* ── Delete button (on unmatched YNAB rows) ─────────────────────────────────── */
+.btn-stage-delete {
+  background: transparent;
+  border: 1px solid var(--border-hi);
+  color: var(--red);
+  font-size: 0.72rem;
+  font-weight: 500;
+  padding: 0.2rem 0.5rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s;
+}
+.btn-stage-delete:hover { background: var(--red-dim); border-color: var(--red); }
+
+/* ── Unmatched YNAB action cluster (Roll Fwd + Delete) ──────────────────────── */
+.unmatched-ynab-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  justify-content: flex-end;
+}
+
+.col-action-wide { width: 140px !important; }
+
+/* ── Pending approval section ───────────────────────────────────────────────── */
+.pending-section { border-top: 1px solid var(--border); }
+
+.pending-section-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 1.25rem;
+  background: rgba(251, 191, 36, 0.06);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--amber);
+}
+
+.pair-pending-even td { background: rgba(251, 191, 36, 0.04); }
+.pair-pending-odd  td { background: transparent; }
+
+.pending-actions { width: 64px !important; text-align: right; }
+
+.btn-approve, .btn-reject {
+  background: transparent;
+  border: 1px solid;
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 0.15rem 0.45rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+  line-height: 1;
+  transition: background 0.15s;
+}
+
+.btn-approve {
+  color: var(--green);
+  border-color: var(--green-dim);
+  margin-right: 0.3rem;
+}
+.btn-approve:hover { background: var(--green-dim); }
+
+.btn-reject {
+  color: var(--red);
+  border-color: var(--red-dim);
+}
+.btn-reject:hover { background: var(--red-dim); }
+
+.badge-pending  { background: rgba(251, 191, 36, 0.15); color: var(--amber); }
+.badge-approved { background: rgba(34, 197, 94,  0.15); color: var(--green); }
 
 /* ── Scrollbar ─────────────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 8px; height: 8px; }

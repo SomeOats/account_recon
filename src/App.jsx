@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import {
   getBudgets, getAccounts, getTransactionsSince, getAccountDetails,
-  getCategories, clearTransactions, createTransactions, formatCurrency,
+  getCategories, clearTransactions, createTransactions, deleteTransaction, formatCurrency,
 } from './ynab';
 import { parseOFX } from './ofx';
 import { matchTransactions } from './matcher';
@@ -95,8 +95,10 @@ function SortTh({ label, colKey, config, onSort, right }) {
 }
 
 // ─── Confidence Badge ─────────────────────────────────────────────────────────
-function ConfidenceBadge({ score, manual }) {
-  if (manual) return <span className="badge badge-manual">Manual</span>;
+function ConfidenceBadge({ score, manual, pending, approved }) {
+  if (pending)  return <span className="badge badge-pending">Pending</span>;
+  if (approved) return <span className="badge badge-approved">Approved</span>;
+  if (manual)   return <span className="badge badge-manual">Manual</span>;
   if (score >= 0.8) return <span className="badge badge-high">High</span>;
   if (score >= 0.5) return <span className="badge badge-med">Medium</span>;
   return <span className="badge badge-low">Low</span>;
@@ -290,15 +292,18 @@ function AmountOverrideModal({ ynab, currentAmount, onApply, onClose }) {
 
 // ─── Reconciliation Panel ─────────────────────────────────────────────────────
 function ReconcilePanel({
-  matches, unmatchedOfx, unmatchedYnab,
+  matches, pendingMatches, unmatchedOfx, unmatchedYnab,
+  zeroAmountOfx,
   ofxData, startingBalanceCheck, endingCheck,
-  stagedNew, amountOverrides, categoryGroups, categoriesLoading,
+  stagedNew, stagedDeletes, amountOverrides, categoryGroups, categoriesLoading,
   rolledForward, onRollForward, onUndoRollForward,
   onManualMatch, onUnmatch,
+  onApprovePending, onRejectPending,
   onPreStageModal, onConfirmStage, onUnstage,
+  onStageDelete, onUnstageDelete,
   onOpenAmountOverride, onClearAmountOverride,
   onPush, pushing, pushError,
-  clearedIds,
+  onRefresh, clearedIds,
 }) {
   const [selOfxId,  setSelOfxId]  = useState(null);
   const [selYnabId, setSelYnabId] = useState(null);
@@ -306,9 +311,23 @@ function ReconcilePanel({
   const [amountOverrideTarget, setAmountOverrideTarget] = useState(null); // { ynab, currentAmount }
 
   const alreadyCleared = clearedIds.size > 0;
-  const hasIssues      = !startingBalanceCheck.matches || unmatchedOfx.length > 0;
-  const canMatch       = selOfxId !== null && selYnabId !== null;
-  const canPush        = !alreadyCleared && (matches.length > 0 || stagedNew.length > 0);
+  const hasIssues      = !startingBalanceCheck.matches || unmatchedOfx.length > 0 || pendingMatches.length > 0;
+
+  const selOfxTxn  = selOfxId  ? unmatchedOfx.find(t => t.fitid === selOfxId)  : null;
+  const selYnabTxn = selYnabId ? unmatchedYnab.find(t => t.id === selYnabId)   : null;
+  const ynabEffAmt = selYnabTxn ? (amountOverrides[selYnabTxn.id] ?? selYnabTxn.amount) : null;
+  const bothSelected   = selOfxId !== null && selYnabId !== null;
+  const canMatch       = bothSelected && selOfxTxn?.amountMilliunits === ynabEffAmt;
+  const amountMismatch = bothSelected && selOfxTxn?.amountMilliunits !== ynabEffAmt;
+  const allFileAccountedFor = unmatchedOfx.length === 0 && pendingMatches.length === 0;
+  const allYnabAccountedFor = unmatchedYnab.length === 0;
+  const allAccountedFor     = allFileAccountedFor && allYnabAccountedFor;
+  const hasSomethingToPush  = matches.length > 0 || stagedNew.length > 0 || stagedDeletes.length > 0;
+  const canPush = !alreadyCleared
+    && startingBalanceCheck.matches
+    && allAccountedFor
+    && endingCheck.matches
+    && hasSomethingToPush;
 
   function handleMatchSelected() {
     onManualMatch(selOfxId, selYnabId);
@@ -369,13 +388,15 @@ function ReconcilePanel({
       {/* ── Step 2: Transaction Matching ──────────────────────────────────── */}
       <div className="recon-step">
         <div className="step-label">
-          <span className={`step-icon ${unmatchedOfx.length === 0 ? 'ok' : 'fail'}`}>
-            {unmatchedOfx.length === 0 ? '✓' : '✗'}
+          <span className={`step-icon ${unmatchedOfx.length === 0 && pendingMatches.length === 0 ? 'ok' : unmatchedOfx.length === 0 && pendingMatches.length > 0 ? 'warn' : 'fail'}`}>
+            {unmatchedOfx.length === 0 && pendingMatches.length === 0 ? '✓' : unmatchedOfx.length === 0 && pendingMatches.length > 0 ? '?' : '✗'}
           </span>
           Step 2 — Transaction Matching
           <span className="step-count">
             {matches.length} matched
+            {pendingMatches.length > 0 && ` · ${pendingMatches.length} pending approval`}
             {stagedNew.length > 0 && ` · ${stagedNew.length} staged new`}
+            {stagedDeletes.length > 0 && ` · ${stagedDeletes.length} staged delete`}
             {unmatchedOfx.length > 0 && ` · ${unmatchedOfx.length} file unmatched`}
             {unmatchedYnab.length > 0 && ` · ${unmatchedYnab.length} YNAB unmatched`}
             {rolledForward.length > 0 && ` · ${rolledForward.length} rolled forward`}
@@ -397,7 +418,7 @@ function ReconcilePanel({
                 </tr>
               </thead>
               <tbody>
-                {matches.map(({ ofx, ynab, payeeScore, daysDiff, manual }, i) => {
+                {matches.map(({ ofx, ynab, payeeScore, daysDiff, manual, approved }, i) => {
                   const cleared    = clearedIds.has(ynab.id);
                   const overridden = amountOverrides[ynab.id] !== undefined;
                   const dispAmt    = overridden ? amountOverrides[ynab.id] : ynab.amount;
@@ -432,22 +453,8 @@ function ReconcilePanel({
                           {overridden && (
                             <span className="amount-original">{formatCurrency(ynab.amount)}</span>
                           )}
-                          {!cleared && (
-                            <button
-                              className="btn-edit-amount"
-                              title="Edit amount"
-                              onClick={() => setAmountOverrideTarget({ ynab, currentAmount: dispAmt })}
-                            >✎</button>
-                          )}
-                          {overridden && !cleared && (
-                            <button
-                              className="btn-edit-amount btn-revert"
-                              title="Revert to original"
-                              onClick={() => onClearAmountOverride(ynab.id)}
-                            >↩</button>
-                          )}
                         </td>
-                        <td><ConfidenceBadge score={payeeScore} manual={manual} /></td>
+                        <td><ConfidenceBadge score={payeeScore} manual={manual} approved={approved} /></td>
                         <td className="col-action">
                           {!cleared && (
                             <button className="btn-unmatch" onClick={() => onUnmatch(ofx.fitid)}>
@@ -464,6 +471,93 @@ function ReconcilePanel({
           </div>
         )}
 
+        {/* Zero-dollar OFX transactions — informational, not required to match */}
+        {zeroAmountOfx.length > 0 && (
+          <div className="zero-amount-section">
+            <div className="zero-amount-section-hdr">
+              <span>Zero-Amount Statement Entries</span>
+              <span className="step-count">{zeroAmountOfx.length} — informational, no match required</span>
+            </div>
+            <div className="table-wrap">
+              <table className="txn-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Payee / Description</th>
+                    <th className="right">Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {zeroAmountOfx.map(t => (
+                    <tr key={t.fitid} className="row-zero-amount">
+                      <td className="col-date">{t.date}</td>
+                      <td className="col-payee">{t.name || <span className="dim">—</span>}</td>
+                      <td className="col-amount dim">$0.00</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Pending approval — amount+date matches that need user confirmation */}
+        {pendingMatches.length > 0 && (
+          <div className="pending-section">
+            <div className="pending-section-hdr">
+              <span>Pending Approval</span>
+              <span className="step-count">{pendingMatches.length} — amount/date match only, payee unverified</span>
+            </div>
+            <div className="table-wrap">
+              <table className="txn-table match-table">
+                <thead>
+                  <tr>
+                    <th className="col-source">Source</th>
+                    <th>Date</th>
+                    <th>Payee</th>
+                    <th className="right">Amount</th>
+                    <th>Match</th>
+                    <th className="col-action pending-actions"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pendingMatches.map(({ ofx, ynab, daysDiff: dd }, i) => {
+                    const pairCls    = `pair-pending-${i % 2 === 0 ? 'even' : 'odd'}`;
+                    const fileAmtCls = ofx.amountMilliunits < 0 ? 'neg' : 'pos';
+                    const ynabAmtCls = ynab.amount < 0 ? 'neg' : 'pos';
+                    return (
+                      <>
+                        <tr key={`${ofx.fitid}-file`} className={`row-pair row-file ${pairCls}`}>
+                          <td><span className="source-badge source-file">File</span></td>
+                          <td className="col-date">{ofx.date}</td>
+                          <td className="col-payee">{ofx.name || <span className="dim">—</span>}</td>
+                          <td className={`col-amount ${fileAmtCls}`}>{formatCurrency(ofx.amountMilliunits)}</td>
+                          <td></td>
+                          <td></td>
+                        </tr>
+                        <tr key={`${ofx.fitid}-ynab`} className={`row-pair row-ynab ${pairCls}`}>
+                          <td><span className="source-badge source-ynab">YNAB</span></td>
+                          <td className="col-date">
+                            {ynab.date}
+                            {dd > 0 && <span className="day-drift"> ({dd}d)</span>}
+                          </td>
+                          <td className="col-payee">{ynab.payee_name || <span className="dim">—</span>}</td>
+                          <td className={`col-amount ${ynabAmtCls}`}>{formatCurrency(ynab.amount)}</td>
+                          <td><ConfidenceBadge pending /></td>
+                          <td className="col-action pending-actions">
+                            <button className="btn-approve" title="Approve match" onClick={() => onApprovePending(ofx.fitid)}>✓</button>
+                            <button className="btn-reject"  title="Reject match"  onClick={() => onRejectPending(ofx.fitid)}>✗</button>
+                          </td>
+                        </tr>
+                      </>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         {/* Unmatched transactions */}
         {unmatchedRows.length > 0 && (
           <div className="unmatched-section">
@@ -474,14 +568,17 @@ function ReconcilePanel({
               </span>
             </div>
 
-            {canMatch && (
-              <div className="match-action-bar">
-                <span className="match-action-hint">1 file + 1 YNAB transaction selected</span>
+            {bothSelected && (
+              <div className={`match-action-bar${amountMismatch ? ' match-action-bar-warn' : ''}`}>
+                {amountMismatch
+                  ? <span className="match-action-hint match-action-warn">Amounts don't match — edit the YNAB amount first</span>
+                  : <span className="match-action-hint">1 file + 1 YNAB transaction selected</span>
+                }
                 <div className="match-action-btns">
                   <button className="btn-ghost btn-sm" onClick={() => { setSelOfxId(null); setSelYnabId(null); }}>
                     Clear
                   </button>
-                  <button className="btn-primary btn-sm" onClick={handleMatchSelected}>
+                  <button className="btn-primary btn-sm" onClick={handleMatchSelected} disabled={!canMatch}>
                     Match Selected
                   </button>
                 </div>
@@ -504,7 +601,9 @@ function ReconcilePanel({
                   {unmatchedRows.map(row => {
                     const isFile     = row.src === 'file';
                     const isSelected = isFile ? selOfxId === row.id : selYnabId === row.id;
-                    const amtCls     = row.amount < 0 ? 'neg' : 'pos';
+                    const override   = !isFile ? amountOverrides[row.id] : undefined;
+                    const dispAmt    = override !== undefined ? override : row.amount;
+                    const amtCls     = dispAmt < 0 ? 'neg' : 'pos';
                     return (
                       <tr
                         key={`${row.src}-${row.id}`}
@@ -521,11 +620,38 @@ function ReconcilePanel({
                         </td>
                         <td className="col-date">{row.date}</td>
                         <td className="col-payee">{row.payee || <span className="dim">—</span>}</td>
-                        <td className={`col-amount ${amtCls}`}>{formatCurrency(row.amount)}</td>
+                        <td className={`col-amount ${amtCls}`} onClick={e => e.stopPropagation()}>
+                          {isFile ? formatCurrency(row.amount) : (
+                            <span className="amount-with-edit">
+                              <span className="amount-edit-btns">
+                                <button
+                                  className="btn-edit-amount"
+                                  title="Edit YNAB amount"
+                                  onClick={() => setAmountOverrideTarget({ ynab: row.raw, currentAmount: dispAmt })}
+                                >✎</button>
+                                {override !== undefined && (
+                                  <button
+                                    className="btn-edit-amount btn-revert"
+                                    title="Revert to original"
+                                    onClick={() => onClearAmountOverride(row.id)}
+                                  >↩</button>
+                                )}
+                              </span>
+                              <span className="amount-value">
+                                <span className={override !== undefined ? 'amount-overridden' : ''}>
+                                  {formatCurrency(dispAmt)}
+                                </span>
+                                {override !== undefined && (
+                                  <span className="amount-original">{formatCurrency(row.amount)}</span>
+                                )}
+                              </span>
+                            </span>
+                          )}
+                        </td>
                         <td className="col-sel">
                           <span className={`sel-dot ${isSelected ? 'sel-on' : ''}`}>{isSelected ? '●' : '○'}</span>
                         </td>
-                        <td className="col-action" onClick={e => e.stopPropagation()}>
+                        <td className="col-action col-action-wide" onClick={e => e.stopPropagation()}>
                           {isFile ? (
                             <button
                               className="btn-stage-new"
@@ -534,12 +660,20 @@ function ReconcilePanel({
                               + New
                             </button>
                           ) : (
-                            <button
-                              className="btn-roll-forward"
-                              onClick={() => { if (selYnabId === row.id) setSelYnabId(null); onRollForward(row.id); }}
-                            >
-                              Roll Forward
-                            </button>
+                            <div className="unmatched-ynab-actions">
+                              <button
+                                className="btn-roll-forward"
+                                onClick={() => { if (selYnabId === row.id) setSelYnabId(null); onRollForward(row.id); }}
+                              >
+                                Roll Fwd
+                              </button>
+                              <button
+                                className="btn-stage-delete"
+                                onClick={() => { if (selYnabId === row.id) setSelYnabId(null); onStageDelete(row.id); }}
+                              >
+                                Delete
+                              </button>
+                            </div>
                           )}
                         </td>
                       </tr>
@@ -580,11 +714,13 @@ function ReconcilePanel({
                       <td className="col-date">{t.date}</td>
                       <td className="col-payee">{t.payee_name || <span className="dim">—</span>}</td>
                       <td className={`col-amount ${t.amount < 0 ? 'neg' : 'pos'}`}>{formatCurrency(t.amount)}</td>
-                      <td className="col-action">
-                        <button className="btn-unmatch" onClick={() => onUndoRollForward(t.id)}>
-                          Undo
-                        </button>
-                      </td>
+                      {!alreadyCleared && (
+                        <td className="col-action">
+                          <button className="btn-unmatch" onClick={() => onUndoRollForward(t.id)}>
+                            Undo
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -623,14 +759,54 @@ function ReconcilePanel({
                         <td className="col-memo">{cat ? cat.name : <span className="dim">Uncategorized</span>}</td>
                         <td className="col-memo">{s.memo || <span className="dim">—</span>}</td>
                         <td className={`col-amount ${amtCls}`}>{formatCurrency(s.ofx.amountMilliunits)}</td>
-                        <td className="col-action">
-                          <button className="btn-unmatch" onClick={() => onUnstage(s.ofx.fitid)}>
-                            Unstage
-                          </button>
-                        </td>
+                        {!alreadyCleared && (
+                          <td className="col-action">
+                            <button className="btn-unmatch" onClick={() => onUnstage(s.ofx.fitid)}>
+                              Unstage
+                            </button>
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Staged for deletion */}
+        {stagedDeletes.length > 0 && (
+          <div className="delete-section">
+            <div className="delete-section-hdr">
+              <span>Staged for Deletion</span>
+              <span className="step-count">{stagedDeletes.length} transaction{stagedDeletes.length !== 1 ? 's' : ''} — will be removed from YNAB</span>
+            </div>
+            <div className="table-wrap">
+              <table className="txn-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Payee</th>
+                    <th className="right">Amount</th>
+                    <th className="col-action"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stagedDeletes.map(t => (
+                    <tr key={t.id} className="row-staged-delete">
+                      <td className="col-date">{t.date}</td>
+                      <td className="col-payee">{t.payee_name || <span className="dim">—</span>}</td>
+                      <td className={`col-amount ${t.amount < 0 ? 'neg' : 'pos'}`}>{formatCurrency(t.amount)}</td>
+                      {!alreadyCleared && (
+                        <td className="col-action">
+                          <button className="btn-unmatch" onClick={() => onUnstageDelete(t.id)}>
+                            Undo
+                          </button>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -680,31 +856,64 @@ function ReconcilePanel({
       </div>
 
       {/* ── Action ───────────────────────────────────────────────────────── */}
-      {!alreadyCleared && canPush && (
+      {!alreadyCleared && (
         <div className="recon-action">
+          <div className="push-checklist">
+            <div className={`push-check ${startingBalanceCheck.matches ? 'push-check-ok' : 'push-check-fail'}`}>
+              <span className="push-check-icon">{startingBalanceCheck.matches ? '✓' : '✗'}</span>
+              Starting balance matches YNAB cleared balance
+            </div>
+            <div className={`push-check ${allAccountedFor ? 'push-check-ok' : 'push-check-fail'}`}>
+              <span className="push-check-icon">{allAccountedFor ? '✓' : '✗'}</span>
+              All transactions accounted for
+              {!allAccountedFor && (
+                <span className="push-check-note">
+                  {[
+                    unmatchedOfx.length  > 0 && `${unmatchedOfx.length} file unmatched`,
+                    pendingMatches.length > 0 && `${pendingMatches.length} pending approval`,
+                    unmatchedYnab.length > 0 && `${unmatchedYnab.length} YNAB unmatched`,
+                  ].filter(Boolean).join(' · ')}
+                </span>
+              )}
+            </div>
+            <div className={`push-check ${endingCheck.matches ? 'push-check-ok' : 'push-check-fail'}`}>
+              <span className="push-check-icon">{endingCheck.matches ? '✓' : '✗'}</span>
+              Projected balance matches statement ending balance
+            </div>
+          </div>
           {pushError && <div className="error-banner" style={{ marginBottom: '0.75rem' }}>{pushError}</div>}
-          <button className="btn-primary" onClick={onPush} disabled={pushing}>
+          <button className="btn-primary" onClick={onPush} disabled={pushing || !canPush}>
             {pushing ? 'Pushing to YNAB…' : 'Push to YNAB'}
           </button>
-          <p className="recon-action-note">
-            {matches.length > 0 && (
-              <>
-                Mark {matches.length} matched transaction{matches.length !== 1 ? 's' : ''} as cleared
-                {overrideCount > 0 && ` (${overrideCount} with updated amounts)`}.
-              </>
-            )}
-            {matches.length > 0 && stagedNew.length > 0 && ' '}
-            {stagedNew.length > 0 && (
-              <>Create {stagedNew.length} new transaction{stagedNew.length !== 1 ? 's' : ''} in YNAB.</>
-            )}
-          </p>
+          {canPush && (
+            <p className="recon-action-note">
+              {matches.length > 0 && (
+                <>
+                  Mark {matches.length} matched transaction{matches.length !== 1 ? 's' : ''} as cleared
+                  {overrideCount > 0 && ` (${overrideCount} with updated amounts)`}.{' '}
+                </>
+              )}
+              {stagedNew.length > 0 && (
+                <>Create {stagedNew.length} new transaction{stagedNew.length !== 1 ? 's' : ''} in YNAB.{' '}</>
+              )}
+              {stagedDeletes.length > 0 && (
+                <>Delete {stagedDeletes.length} transaction{stagedDeletes.length !== 1 ? 's' : ''} from YNAB.</>
+              )}
+            </p>
+          )}
         </div>
       )}
       {alreadyCleared && (
         <div className="recon-action">
-          <div className="step-success" style={{ marginBottom: 0 }}>
+          <div className="step-success" style={{ marginBottom: '0.75rem' }}>
             {clearedIds.size} transaction{clearedIds.size !== 1 ? 's' : ''} marked as cleared in YNAB.
           </div>
+          <button className="btn-secondary" onClick={onRefresh}>
+            ↺ Reconcile Again
+          </button>
+          <p className="recon-action-note">
+            Removes the current statement and re-fetches uncleared transactions from YNAB.
+          </p>
         </div>
       )}
 
@@ -756,12 +965,17 @@ function Dashboard({ token, budgets, onReset }) {
   const [showImportModal, setShowImportModal] = useState(false);
   const [ofxData, setOfxData]                 = useState(null);
   const [matches, setMatches]                 = useState([]);
+  const [pendingMatches, setPendingMatches]   = useState([]);
   const [unmatchedOfx, setUnmatchedOfx]       = useState([]);
   const [unmatchedYnab, setUnmatchedYnab]     = useState([]);
   const [reconStartingCheck, setReconStartingCheck] = useState(null);
 
+  // ── Zero-dollar OFX transactions (informational — not matched or required) ──
+  const [zeroAmountOfx, setZeroAmountOfx] = useState([]);
+
   // ── Staged new transactions ────────────────────────────────────────────────
   const [stagedNew, setStagedNew]               = useState([]);
+  const [stagedDeletes, setStagedDeletes]       = useState([]);
   const [amountOverrides, setAmountOverrides]   = useState({});
   const [categoryGroups, setCategoryGroups]     = useState([]);
   const [categoriesLoading, setCategoriesLoading] = useState(false);
@@ -832,10 +1046,13 @@ function Dashboard({ token, budgets, onReset }) {
   function resetPhase2() {
     setOfxData(null);
     setMatches([]);
+    setPendingMatches([]);
     setUnmatchedOfx([]);
     setUnmatchedYnab([]);
     setReconStartingCheck(null);
+    setZeroAmountOfx([]);
     setStagedNew([]);
+    setStagedDeletes([]);
     setAmountOverrides({});
     setRolledForward([]);
     setPushError('');
@@ -924,8 +1141,12 @@ function Dashboard({ token, budgets, onReset }) {
   // ── Reconciliation handlers ───────────────────────────────────────────────
   function handleRunReconciliation(parsed) {
     setOfxData(parsed);
-    const result      = matchTransactions(transactions, parsed.transactions);
+    const zeroAmt = parsed.transactions.filter(t => t.amountMilliunits === 0);
+    const nonZero = parsed.transactions.filter(t => t.amountMilliunits !== 0);
+    setZeroAmountOfx(zeroAmt);
+    const result      = matchTransactions(transactions, nonZero);
     setMatches(result.matched);
+    setPendingMatches(result.pendingMatches);
     setUnmatchedOfx(result.unmatchedOfx);
     setUnmatchedYnab(result.unmatchedYnab);
     const ynabCleared = accountDetails.cleared_balance;
@@ -962,6 +1183,37 @@ function Dashboard({ token, budgets, onReset }) {
     setUnmatchedYnab(prev => [...prev, match.ynab].sort((a, b) => a.date < b.date ? -1 : 1));
     // Remove any amount override for this YNAB transaction
     setAmountOverrides(prev => { const n = { ...prev }; delete n[match.ynab.id]; return n; });
+  }
+
+  // ── Staged delete handlers ────────────────────────────────────────────────
+  function handleStageDelete(ynabId) {
+    const txn = unmatchedYnab.find(t => t.id === ynabId);
+    if (!txn) return;
+    setStagedDeletes(prev => [...prev, txn]);
+    setUnmatchedYnab(prev => prev.filter(t => t.id !== ynabId));
+  }
+
+  function handleUnstageDelete(ynabId) {
+    const txn = stagedDeletes.find(t => t.id === ynabId);
+    if (!txn) return;
+    setStagedDeletes(prev => prev.filter(t => t.id !== ynabId));
+    setUnmatchedYnab(prev => [...prev, txn].sort((a, b) => a.date < b.date ? -1 : 1));
+  }
+
+  // ── Pending match approval ────────────────────────────────────────────────
+  function handleApprovePending(ofxFitid) {
+    const pm = pendingMatches.find(p => p.ofx.fitid === ofxFitid);
+    if (!pm) return;
+    setPendingMatches(prev => prev.filter(p => p.ofx.fitid !== ofxFitid));
+    setMatches(prev => [...prev, { ofx: pm.ofx, ynab: pm.ynab, payeeScore: null, daysDiff: pm.daysDiff, approved: true }]);
+  }
+
+  function handleRejectPending(ofxFitid) {
+    const pm = pendingMatches.find(p => p.ofx.fitid === ofxFitid);
+    if (!pm) return;
+    setPendingMatches(prev => prev.filter(p => p.ofx.fitid !== ofxFitid));
+    setUnmatchedOfx(prev => [...prev, pm.ofx].sort((a, b) => a.date < b.date ? -1 : 1));
+    setUnmatchedYnab(prev => [...prev, pm.ynab].sort((a, b) => a.date < b.date ? -1 : 1));
   }
 
   // ── Stage-as-new handlers ─────────────────────────────────────────────────
@@ -1029,18 +1281,28 @@ function Dashboard({ token, budgets, onReset }) {
         }));
         await createTransactions(token, selectedBudget.id, newTxns);
       }
+      if (stagedDeletes.length > 0) {
+        for (const txn of stagedDeletes) {
+          await deleteTransaction(token, selectedBudget.id, txn.id);
+        }
+      }
       const details = await getAccountDetails(token, selectedBudget.id, selectedAccount.id);
       setAccountDetails(details);
       const idSet = new Set(matches.map(m => m.ynab.id));
-      setTransactions(prev => prev.filter(t => !idSet.has(t.id)));
+      const deletedIdSet = new Set(stagedDeletes.map(t => t.id));
+      setTransactions(prev => prev.filter(t => !idSet.has(t.id) && !deletedIdSet.has(t.id)));
       setClearedIds(idSet);
-      setStagedNew([]);
       setAmountOverrides({});
     } catch (err) {
       setPushError(err.message);
     } finally {
       setPushing(false);
     }
+  }
+
+  function handleRefresh() {
+    resetPhase2();
+    loadTransactions();
   }
 
   // ── Derived display values ─────────────────────────────────────────────────
@@ -1203,12 +1465,15 @@ function Dashboard({ token, budgets, onReset }) {
       {reconActive && ofxData && endingCheck && (
         <ReconcilePanel
           matches={matches}
+          pendingMatches={pendingMatches}
           unmatchedOfx={unmatchedOfx}
           unmatchedYnab={unmatchedYnab}
           ofxData={ofxData}
           startingBalanceCheck={reconStartingCheck}
           endingCheck={endingCheck}
+          zeroAmountOfx={zeroAmountOfx}
           stagedNew={stagedNew}
+          stagedDeletes={stagedDeletes}
           amountOverrides={amountOverrides}
           categoryGroups={categoryGroups}
           categoriesLoading={categoriesLoading}
@@ -1217,6 +1482,10 @@ function Dashboard({ token, budgets, onReset }) {
           onUndoRollForward={handleUndoRollForward}
           onManualMatch={handleManualMatch}
           onUnmatch={handleUnmatch}
+          onApprovePending={handleApprovePending}
+          onRejectPending={handleRejectPending}
+          onStageDelete={handleStageDelete}
+          onUnstageDelete={handleUnstageDelete}
           onPreStageModal={ensureCategoriesLoaded}
           onConfirmStage={handleOpenStageModal}
           onUnstage={handleUnstage}
@@ -1225,6 +1494,7 @@ function Dashboard({ token, budgets, onReset }) {
           onPush={handlePushToYnab}
           pushing={pushing}
           pushError={pushError}
+          onRefresh={handleRefresh}
           clearedIds={clearedIds}
         />
       )}

@@ -92,6 +92,19 @@ export async function clearTransactions(token, budgetId, transactions) {
   return res.json();
 }
 
+// Delete a single transaction from YNAB.
+export async function deleteTransaction(token, budgetId, transactionId) {
+  const res = await fetch(`${BASE_URL}/budgets/${budgetId}/transactions/${transactionId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error?.detail || `YNAB API error: ${res.status}`);
+  }
+  return res.json();
+}
+
 // Create new transactions in YNAB.
 // transactions: [{ account_id, date, amount, payee_name, category_id?, memo?, cleared }]
 export async function createTransactions(token, budgetId, transactions) {
