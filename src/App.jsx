@@ -169,7 +169,7 @@ function ImportModal({ onClose, onRun }) {
 }
 
 // ─── Stage as New Modal ───────────────────────────────────────────────────────
-function StageAsNewModal({ ofx, categoryGroups, categoriesLoading, onStage, onClose }) {
+function StageAsNewModal({ ofx, onBudget, categoryGroups, categoriesLoading, onStage, onClose }) {
   const [payee,      setPayee]      = useState(ofx.name || '');
   const [categoryId, setCategoryId] = useState('');
   const [memo,       setMemo]       = useState(ofx.memo || '');
@@ -202,21 +202,23 @@ function StageAsNewModal({ ofx, categoryGroups, categoriesLoading, onStage, onCl
             />
           </div>
 
-          <div className="modal-field">
-            <label>Category</label>
-            <select value={categoryId} onChange={e => setCategoryId(e.target.value)}>
-              <option value="">
-                {categoriesLoading ? 'Loading categories…' : '— Uncategorized —'}
-              </option>
-              {categoryGroups.map(g => (
-                <optgroup key={g.id} label={g.name}>
-                  {g.categories.map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-          </div>
+          {onBudget && (
+            <div className="modal-field">
+              <label>Category</label>
+              <select value={categoryId} onChange={e => setCategoryId(e.target.value)}>
+                <option value="">
+                  {categoriesLoading ? 'Loading categories…' : '— Uncategorized —'}
+                </option>
+                {categoryGroups.map(g => (
+                  <optgroup key={g.id} label={g.name}>
+                    {g.categories.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div className="modal-field">
             <label>Memo</label>
@@ -295,6 +297,7 @@ function ReconcilePanel({
   matches, pendingMatches, unmatchedOfx, unmatchedYnab,
   zeroAmountOfx,
   ofxData, startingBalanceCheck, endingCheck,
+  onBudget,
   stagedNew, stagedDeletes, amountOverrides, categoryGroups, categoriesLoading,
   rolledForward, onRollForward, onUndoRollForward,
   onManualMatch, onUnmatch,
@@ -655,7 +658,7 @@ function ReconcilePanel({
                           {isFile ? (
                             <button
                               className="btn-stage-new"
-                              onClick={() => { onPreStageModal(); setStageTarget(row.raw); }}
+                              onClick={() => { if (onBudget) onPreStageModal(); setStageTarget(row.raw); }}
                             >
                               + New
                             </button>
@@ -921,6 +924,7 @@ function ReconcilePanel({
       {stageTarget !== null && (
         <StageAsNewModal
           ofx={stageTarget}
+          onBudget={onBudget}
           categoryGroups={categoryGroups}
           categoriesLoading={categoriesLoading}
           onStage={(fields) => {
@@ -1485,6 +1489,7 @@ function Dashboard({ token, budgets, onReset }) {
           ofxData={ofxData}
           startingBalanceCheck={reconStartingCheck}
           endingCheck={endingCheck}
+          onBudget={selectedAccount?.on_budget ?? false}
           zeroAmountOfx={zeroAmountOfx}
           stagedNew={stagedNew}
           stagedDeletes={stagedDeletes}
