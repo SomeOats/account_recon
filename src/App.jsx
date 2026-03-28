@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import {
-  getBudgets, getAccounts, getUnclearedTransactions, getAccountDetails,
+  getBudgets, getAccounts, getTransactionsSince, getAccountDetails,
   getCategories, clearTransactions, createTransactions, formatCurrency,
 } from './ynab';
 import { parseOFX } from './ofx';
@@ -293,8 +293,9 @@ function ReconcilePanel({
   matches, unmatchedOfx, unmatchedYnab,
   ofxData, startingBalanceCheck, endingCheck,
   stagedNew, amountOverrides, categoryGroups, categoriesLoading,
+  rolledForward, onRollForward, onUndoRollForward,
   onManualMatch, onUnmatch,
-  onOpenStageModal, onUnstage,
+  onPreStageModal, onConfirmStage, onUnstage,
   onOpenAmountOverride, onClearAmountOverride,
   onPush, pushing, pushError,
   clearedIds,
@@ -377,6 +378,7 @@ function ReconcilePanel({
             {stagedNew.length > 0 && ` · ${stagedNew.length} staged new`}
             {unmatchedOfx.length > 0 && ` · ${unmatchedOfx.length} file unmatched`}
             {unmatchedYnab.length > 0 && ` · ${unmatchedYnab.length} YNAB unmatched`}
+            {rolledForward.length > 0 && ` · ${rolledForward.length} rolled forward`}
           </span>
         </div>
 
@@ -524,12 +526,19 @@ function ReconcilePanel({
                           <span className={`sel-dot ${isSelected ? 'sel-on' : ''}`}>{isSelected ? '●' : '○'}</span>
                         </td>
                         <td className="col-action" onClick={e => e.stopPropagation()}>
-                          {isFile && (
+                          {isFile ? (
                             <button
                               className="btn-stage-new"
-                              onClick={() => setStageTarget(row.raw)}
+                              onClick={() => { onPreStageModal(); setStageTarget(row.raw); }}
                             >
                               + New
+                            </button>
+                          ) : (
+                            <button
+                              className="btn-roll-forward"
+                              onClick={() => { if (selYnabId === row.id) setSelYnabId(null); onRollForward(row.id); }}
+                            >
+                              Roll Forward
                             </button>
                           )}
                         </td>
@@ -542,9 +551,45 @@ function ReconcilePanel({
 
             {!canMatch && (
               <p className="unmatched-hint">
-                Select a File row and a YNAB row to manually match them, or click "+ New" on a file row to create the transaction in YNAB.
+                Select a File row and a YNAB row to manually match them, click "+ New" on a file row to create it in YNAB, or click "Roll Forward" on a YNAB row to defer it to the next statement.
               </p>
             )}
+          </div>
+        )}
+
+        {/* Rolled forward */}
+        {rolledForward.length > 0 && (
+          <div className="rolledfwd-section">
+            <div className="rolledfwd-section-hdr">
+              <span>Rolled Forward — will remain uncleared</span>
+              <span className="step-count">{rolledForward.length}</span>
+            </div>
+            <div className="table-wrap">
+              <table className="txn-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Payee</th>
+                    <th className="right">Amount</th>
+                    <th className="col-action"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rolledForward.map(t => (
+                    <tr key={t.id} className="row-rolledfwd">
+                      <td className="col-date">{t.date}</td>
+                      <td className="col-payee">{t.payee_name || <span className="dim">—</span>}</td>
+                      <td className={`col-amount ${t.amount < 0 ? 'neg' : 'pos'}`}>{formatCurrency(t.amount)}</td>
+                      <td className="col-action">
+                        <button className="btn-unmatch" onClick={() => onUndoRollForward(t.id)}>
+                          Undo
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 
@@ -670,7 +715,7 @@ function ReconcilePanel({
           categoryGroups={categoryGroups}
           categoriesLoading={categoriesLoading}
           onStage={(fields) => {
-            onOpenStageModal(stageTarget.fitid, fields);
+            onConfirmStage(stageTarget.fitid, fields);
             setStageTarget(null);
           }}
           onClose={() => setStageTarget(null)}
@@ -693,20 +738,18 @@ function ReconcilePanel({
 
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 function Dashboard({ token, budgets, onReset }) {
-  const [selectedBudget, setSelectedBudget]   = useState(budgets[0] || null);
+  const [selectedBudget, setSelectedBudget]   = useState(
+    budgets.length === 0 ? null
+      : [...budgets].sort((a, b) => (b.last_modified_on > a.last_modified_on ? 1 : -1))[0]
+  );
   const [accounts, setAccounts]               = useState([]);
   const [selectedAccount, setSelectedAccount] = useState(null);
   const [accountDetails, setAccountDetails]   = useState(null);
   const [transactions, setTransactions]       = useState([]);
-  const [fromDate, setFromDate]               = useState(
-    () => format(startOfMonth(subMonths(new Date(), 1)), 'yyyy-MM-dd')
-  );
-  const [toDate, setToDate]                   = useState(
-    () => format(new Date(), 'yyyy-MM-dd')
-  );
-  const [loading, setLoading]   = useState(false);
-  const [error, setError]       = useState('');
-  const [fetched, setFetched]   = useState(false);
+  const [loading, setLoading]       = useState(false);
+  const [loadingStatus, setLoadingStatus] = useState('');
+  const [error, setError]           = useState('');
+  const [fetched, setFetched]       = useState(false);
   const [sortConfig, setSortConfig] = useState({ key: 'date', dir: 'desc' });
 
   // ── Reconciliation state ───────────────────────────────────────────────────
@@ -722,6 +765,9 @@ function Dashboard({ token, budgets, onReset }) {
   const [amountOverrides, setAmountOverrides]   = useState({});
   const [categoryGroups, setCategoryGroups]     = useState([]);
   const [categoriesLoading, setCategoriesLoading] = useState(false);
+
+  // ── Rolled-forward YNAB transactions ──────────────────────────────────────
+  const [rolledForward, setRolledForward] = useState([]);
 
   // ── Push state ─────────────────────────────────────────────────────────────
   const [pushing, setPushing]     = useState(false);
@@ -791,6 +837,7 @@ function Dashboard({ token, budgets, onReset }) {
     setReconStartingCheck(null);
     setStagedNew([]);
     setAmountOverrides({});
+    setRolledForward([]);
     setPushError('');
     setClearedIds(new Set());
   }
@@ -812,23 +859,49 @@ function Dashboard({ token, budgets, onReset }) {
   async function loadTransactions() {
     if (!selectedAccount) return;
     setLoading(true);
+    setLoadingStatus('');
     setError('');
     setFetched(false);
     resetPhase2();
     try {
-      const [txns, details] = await Promise.all([
-        getUnclearedTransactions(token, selectedBudget.id, selectedAccount.id, fromDate, toDate),
-        getAccountDetails(token, selectedBudget.id, selectedAccount.id),
-      ]);
-      setTransactions(txns);
+      const details = await getAccountDetails(token, selectedBudget.id, selectedAccount.id);
       setAccountDetails(details);
+
+      // Walk backwards month by month until the oldest fetched month is fully cleared.
+      // This collects all uncleared transactions without requiring the user to set a date range.
+      const MAX_MONTHS_BACK = 24;
+      let sinceDate = startOfMonth(new Date());
+      let allTxns   = [];
+
+      for (let i = 0; i <= MAX_MONTHS_BACK; i++) {
+        const sinceDateStr = format(sinceDate, 'yyyy-MM-dd');
+        const sinceMonth   = format(sinceDate, 'yyyy-MM');
+        setLoadingStatus(format(sinceDate, 'MMM yyyy'));
+
+        allTxns = await getTransactionsSince(token, selectedBudget.id, selectedAccount.id, sinceDateStr);
+
+        // Check whether the boundary month (oldest we've fetched) has any uncleared transactions.
+        // If not — including the case where it has no transactions at all — we can stop.
+        const boundaryTxns = allTxns.filter(t => t.date.startsWith(sinceMonth));
+        if (boundaryTxns.every(t => t.cleared !== 'uncleared')) break;
+
+        sinceDate = startOfMonth(subMonths(sinceDate, 1));
+      }
+
+      setTransactions(allTxns.filter(t => t.cleared === 'uncleared'));
       setFetched(true);
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
+      setLoadingStatus('');
     }
   }
+
+  // Auto-fetch when the selected account changes.
+  useEffect(() => {
+    if (selectedAccount) loadTransactions();
+  }, [selectedAccount?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleBudgetChange(e) {
     const budget = budgets.find(b => b.id === e.target.value);
@@ -907,16 +980,19 @@ function Dashboard({ token, budgets, onReset }) {
     setUnmatchedOfx(prev => [...prev, staged.ofx].sort((a, b) => a.date < b.date ? -1 : 1));
   }
 
-  // Intercept "+ New" button click to also lazy-load categories
-  function handleStageNewClick(fitid, fields) {
-    // This is called from ReconcilePanel's onOpenStageModal — which runs after the modal confirms
-    handleOpenStageModal(fitid, fields);
+  // ── Roll-forward handlers ─────────────────────────────────────────────────
+  function handleRollForward(ynabId) {
+    const txn = unmatchedYnab.find(t => t.id === ynabId);
+    if (!txn) return;
+    setRolledForward(prev => [...prev, txn]);
+    setUnmatchedYnab(prev => prev.filter(t => t.id !== ynabId));
   }
 
-  // Trigger lazy category load when ReconcilePanel signals intent to open the stage modal
-  // We pass this as a side-effect trigger via a wrapper
-  function handleBeforeStageModal() {
-    ensureCategoriesLoaded();
+  function handleUndoRollForward(ynabId) {
+    const txn = rolledForward.find(t => t.id === ynabId);
+    if (!txn) return;
+    setRolledForward(prev => prev.filter(t => t.id !== ynabId));
+    setUnmatchedYnab(prev => [...prev, txn].sort((a, b) => a.date < b.date ? -1 : 1));
   }
 
   // ── Amount override handlers ──────────────────────────────────────────────
@@ -1024,20 +1100,8 @@ function Dashboard({ token, budgets, onReset }) {
           </select>
         </div>
 
-        <div className="control-group">
-          <label>From</label>
-          <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} />
-        </div>
-
-        <div className="control-group">
-          <label>To</label>
-          <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} />
-        </div>
-
-        {selectedAccount && (
-          <button className="btn-primary" onClick={loadTransactions} disabled={loading}>
-            {loading ? 'Fetching…' : 'Fetch Uncleared'}
-          </button>
+        {loading && loadingStatus && (
+          <span className="loading-status">Checking {loadingStatus}…</span>
         )}
 
         {budgets.length > 1 && (
@@ -1130,8 +1194,8 @@ function Dashboard({ token, budgets, onReset }) {
       {fetched && transactions.length === 0 && !reconActive && (
         <div className="empty-state">
           <span className="check-icon">✓</span>
-          <p>No uncleared transactions from <strong>{fromDate}</strong> to <strong>{toDate}</strong>.</p>
-          <p className="dim">All transactions in this window are cleared or reconciled.</p>
+          <p>No uncleared transactions found for <strong>{selectedAccount?.name}</strong>.</p>
+          <p className="dim">All transactions are cleared or reconciled.</p>
         </div>
       )}
 
@@ -1148,12 +1212,13 @@ function Dashboard({ token, budgets, onReset }) {
           amountOverrides={amountOverrides}
           categoryGroups={categoryGroups}
           categoriesLoading={categoriesLoading}
+          rolledForward={rolledForward}
+          onRollForward={handleRollForward}
+          onUndoRollForward={handleUndoRollForward}
           onManualMatch={handleManualMatch}
           onUnmatch={handleUnmatch}
-          onOpenStageModal={(fitid, fields) => {
-            handleBeforeStageModal();
-            handleStageNewClick(fitid, fields);
-          }}
+          onPreStageModal={ensureCategoriesLoaded}
+          onConfirmStage={handleOpenStageModal}
           onUnstage={handleUnstage}
           onOpenAmountOverride={handleAmountOverride}
           onClearAmountOverride={handleClearAmountOverride}

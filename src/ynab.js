@@ -45,6 +45,13 @@ export async function getUnclearedTransactions(token, budgetId, accountId, fromD
   );
 }
 
+// Returns all non-deleted transactions for the given account on or after sinceDate
+// ('yyyy-MM-dd' string). Callers handle cleared-status filtering.
+export async function getTransactionsSince(token, budgetId, accountId, sinceDate) {
+  const data = await apiFetch(token, `/budgets/${budgetId}/transactions?since_date=${sinceDate}`);
+  return data.data.transactions.filter(t => t.account_id === accountId && !t.deleted);
+}
+
 export async function getAccountDetails(token, budgetId, accountId) {
   const data = await apiFetch(token, `/budgets/${budgetId}/accounts/${accountId}`);
   return data.data.account;

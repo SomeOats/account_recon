@@ -299,6 +299,15 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   min-width: 180px;
 }
 
+/* Inline status shown while the month-by-month fetch walks backwards */
+.loading-status {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  align-self: flex-end;
+  padding-bottom: 0.65rem;
+}
+
 /* Budget picker is a secondary control — push it to the right and dim it slightly */
 .budget-group {
   margin-left: auto;
@@ -1051,6 +1060,38 @@ input[type="text"]:focus {
   transition: background 0.15s, border-color 0.15s;
 }
 .btn-stage-new:hover { background: var(--green-dim); border-color: var(--green); }
+
+/* ── Roll Forward button (on unmatched YNAB rows) ───────────────────────────── */
+.btn-roll-forward {
+  background: transparent;
+  border: 1px solid var(--border-hi);
+  color: var(--text-sub);
+  font-size: 0.72rem;
+  font-weight: 500;
+  padding: 0.2rem 0.5rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s;
+}
+.btn-roll-forward:hover { color: var(--amber); border-color: var(--amber); }
+
+/* ── Rolled-forward section ─────────────────────────────────────────────────── */
+.rolledfwd-section { border-top: 1px solid var(--border); }
+
+.rolledfwd-section-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 1.25rem;
+  background: rgba(74, 81, 104, 0.15);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.row-rolledfwd td { opacity: 0.55; }
 
 /* ── Staged for creation section ────────────────────────────────────────────── */
 .staged-section { border-top: 1px solid var(--border); }
