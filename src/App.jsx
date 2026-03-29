@@ -1155,14 +1155,20 @@ function Dashboard({ token, budgets, onReset }) {
       setAccountDetails(details);
 
       // Walk backwards month by month to collect all uncleared transactions.
-      // Stop when the oldest fetched month has transactions and they are all reconciled.
-      // Continue when the oldest month has uncleared transactions OR has no transactions at all.
-      // Hard limit: 12 months. Zero total transactions after that window is an error.
-      const MAX_MONTHS_BACK = 12;
-      let sinceDate = startOfMonth(new Date());
-      let allTxns   = [];
+      // Walk backwards month by month collecting uncleared transactions.
+      //
+      // Stop conditions:
+      //   1. Boundary month has ≥1 transaction and all are reconciled — we have everything.
+      //   2. 12 consecutive months return no transactions at all — nothing further back exists.
+      //
+      // There is no cap on how far back we go while uncleared transactions continue to appear.
+      const MAX_EMPTY_STREAK = 12;
+      let sinceDate    = startOfMonth(new Date());
+      let allTxns      = [];
+      let emptyStreak  = 0;
 
-      for (let i = 0; i <= MAX_MONTHS_BACK; i++) {
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
         const sinceDateStr = format(sinceDate, 'yyyy-MM-dd');
         const sinceMonth   = format(sinceDate, 'yyyy-MM');
         setLoadingStatus(format(sinceDate, 'MMM yyyy'));
@@ -1171,19 +1177,23 @@ function Dashboard({ token, budgets, onReset }) {
 
         const boundaryTxns = allTxns.filter(t => t.date.startsWith(sinceMonth));
 
-        // All transactions in the oldest month are reconciled — no need to go further back
-        if (boundaryTxns.length > 0 && boundaryTxns.every(t => t.cleared === 'reconciled')) break;
+        if (boundaryTxns.length === 0) {
+          // Empty month — increment streak and keep going back
+          emptyStreak++;
+          if (emptyStreak >= MAX_EMPTY_STREAK) break;
+        } else {
+          emptyStreak = 0; // reset streak whenever we find any transactions
+          // All transactions in the boundary month are reconciled — stop here
+          if (boundaryTxns.every(t => t.cleared === 'reconciled')) break;
+          // Otherwise there are uncleared (or only cleared) transactions — keep going back
+        }
 
-        // Hit the limit — stop regardless
-        if (i === MAX_MONTHS_BACK) break;
-
-        // Boundary month has uncleared transactions, or has no transactions at all — keep going back
         sinceDate = startOfMonth(subMonths(sinceDate, 1));
       }
 
       if (allTxns.length === 0) {
         throw new Error(
-          `No transactions found for "${selectedAccount.name}" in the last ${MAX_MONTHS_BACK} months. ` +
+          `No transactions found for "${selectedAccount.name}". ` +
           'Verify the correct account is selected.'
         );
       }
